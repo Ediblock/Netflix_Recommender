@@ -107,31 +107,34 @@ highest_score = 5.0
 
 training_dataset = tf.data.Dataset.list_files(training_set_file_path + "*.txt")
 if should_train:
-    model = create_model(movie_titles.count()[0])
+    model = create_model2(movie_titles.count()[0])
     training_data = da.MovieDataset(training_dataset, movie_titles.count()[0], highest_score)
     training_data.set_batch_size(64)
-    training_data.set_weight_sample(weight_sample=True)
+    training_data.set_weight_sample(weight_sample=False)
     training_data.set_data_test_percentage(10)
     training_data.set_data_validation_percentage(10)
     training_data.split_train_test_validation_data(shuffle=True)
-    loss_fn = metrics.CustomMSE()
+    training_data.set_hot_encoding(True)
+    # loss_fn = metrics.CustomMSE()
+    loss_fn = tf.keras.losses.MeanSquaredError()
 
 
     # Training loop
-    epochs = 5
-    initial_learning_rate = 1e-5
+    epochs = 10
+    initial_learning_rate = 1e-3
     # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
     #                                                                decay_rate=1/10)
-    # optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
-    optimizer = tf.keras.optimizers.SGD(learning_rate=initial_learning_rate)
-    exp_learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate,
-                                                                       decay_steps=training_data.get_train_length(),
-                                                                         decay_rate=4e6)
+    optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=initial_learning_rate)
+    # exp_learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate,
+    #                                                                    decay_steps=training_data.get_train_length(),
+    #                                                                      decay_rate=4e6)
     train_loss_list = []
     test_loss_list = []
     learning_rate_list = []
+    rmse_metric = tf.keras.metrics.RootMeanSquaredError()
 
-    train_batch_summary_writer = tf.summary.create_file_writer(get_run_logdir() + "_batch")
+    # train_batch_summary_writer = tf.summary.create_file_writer(get_run_logdir() + "_batch")
     train_summary_writer = tf.summary.create_file_writer(get_run_logdir())
 
     for epoch in range(epochs):
@@ -140,100 +143,114 @@ if should_train:
         # optimizer._set_hyper("learning_rate", learning_rate(epoch).numpy())
         # keras.backend.set_value(optimizer.learning_rate, learning_rate(epoch).numpy())
 
-        for step in range(int(training_data.get_train_length()/200)):
-            x_batch, y_batch, weights_batch = training_data.get_train_data(step)
-            x_batch = np.array(x_batch)
-            y_batch = np.array(y_batch)
-            weights_batch = np.array(weights_batch, dtype="float32")
+        for step in range(int(training_data.get_train_length())):
+            # x_batch, y_batch, weights_batch = training_data.get_train_data(step)
+            x1_batch, x2_batch, y_batch = training_data.get_train_data(step)
+            x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
+            # weights_batch = np.array(weights_batch, dtype="float32")
             # if (epoch*int(training_data.get_train_length()/120) + step) % 10 == 0:
             #     optimizer._set_hyper("learning_rate", initial_learning_rate/2.)
             # optimizer._set_hyper("learning_rate", learning_rate(epoch*int(training_data.get_train_length()/120) + step).numpy())
             # optimizer._set_hyper("learning_rate", initial_learning_rate)
             # optimizer.learning_rate = exp_learning_rate(step)
-            optimizer.learning_rate = 10
-
+            # optimizer.learning_rate = 10
 
             with tf.GradientTape() as tape:
-                #Forward pass
-                logits = model(x_batch, training=True)
+                # Forward pass
+                logits = model([x2_batch, x1_batch], training=True)
 
-                #Computing loss value
+                # Computing loss value
                 # loss_value = tf.constant(10*np.log10(loss_fn(y_batch, logits, mask_loss=weights_batch)), dtype="float32")
                 # Calculating x*log10(y)
-                loss_value = tf.math.multiply(tf.math.divide(tf.math.log(loss_fn(y_batch, logits, mask_loss=weights_batch)),
-                                                             tf.math.log(tf.constant(10, dtype="float32"))),
-                                              tf.constant(10, dtype="float32"))
-                # loss_value = loss_fn(y_batch, logits, mask_loss=weights_batch)
 
-            #Updating gradients with regards to the loss
+                # loss_value = tf.math.multiply(tf.math.divide(tf.math.log(loss_fn(y_batch, logits, mask_loss=weights_batch)),
+                #                                              tf.math.log(tf.constant(10, dtype="float32"))),
+                #                               tf.constant(10, dtype="float32"))
+
+                loss_value = loss_fn(y_batch, logits)
+
+            # Updating gradients with regards to the loss
             grads = tape.gradient(loss_value, model.trainable_weights)
 
-            #Updating weights for the model
+            # Updating weights for the model
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
             train_loss_list.append(loss_value)
             # learning_rate_list.append(optimizer._decayed_lr("float32").numpy())
 
-            #Saving to tensorboard
-            with train_batch_summary_writer.as_default():
-                tf.summary.scalar("loss", loss_value, step=step)
-                tf.summary.scalar("learning_rate", optimizer.learning_rate, step=step)
-                for layer in model.layers:
-                    # tf.summary.histogram(layer.name, layer.get_weights(), step=step)
-                    for i in range(len(layer.variables)):
-                        tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
+            # Saving to tensorboard
+            # with train_batch_summary_writer.as_default():
+            #     tf.summary.scalar("loss", loss_value, step=step)
+            #     tf.summary.scalar("learning_rate", optimizer.learning_rate, step=step)
+            #     for layer in model.layers:
+            #         for i in range(len(layer.variables)):
+            #             tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
+            # tf.summary.histogram(layer.)
 
             if step % 10 == 0:
                 print(f"Loss values on the training data is: {loss_value}")
 
+        # Evaluating test rmse
+        # For shorter evaluation time testing data is divided by 10
+        rmse_metric.reset_state()
+        training_data.shuffle_test_data()
+        for step in range(training_data.get_test_length() // 10):
+            x1_batch, x2_batch, y_batch = training_data.get_test_data(step)
+            x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
+
+            pred = model([x2_batch, x1_batch])
+            rmse_metric(y_batch, pred)
+
         with train_summary_writer.as_default():
-            tf.summary.scalar("loss", loss_value, step=epoch)
+            tf.summary.scalar("Train_loss", loss_value, step=epoch)
+            tf.summary.scalar("Test_loss", rmse_metric.result().numpy(), step=epoch)
             tf.summary.scalar("learning_rate", optimizer.learning_rate, step=epoch)
             for layer in model.layers:
-                # tf.summary.histogram(layer.name, layer.get_weights(), step=epoch)
                 for i in range(len(layer.variables)):
-                    tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy())
+                    tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
 
-        #log every 50 epoch
-        if epoch % 2 == 0:
-            if epoch == 0:
-                lowest_loss_val = 0
-            loss_sum = []
-            number_per_slices = 20
-            training_data.shuffle_validation_data()
-            for i in range(int(np.ceil(training_data.get_test_length()/number_per_slices))):
-                if i < int(np.floor(training_data.get_test_length()/number_per_slices)):
-                    x_batch, y_batch, weights_batch = training_data.get_test_data(slice(i*number_per_slices, (i + 1)*number_per_slices, None))
-                    x_batch = np.array(x_batch)
-                    y_batch = np.array(y_batch)
-                    weights_batch = np.array(weights_batch, dtype="float32")
-                else:
-                    x_batch, y_batch, weights_batch = training_data.get_test_data(slice(i*number_per_slices,
-                                                                                        training_data.get_test_length(), None))
-                    x_batch = np.array(x_batch)
-                    y_batch = np.array(y_batch)
-                    weights_batch = np.array(weights_batch, dtype="float32")
+        #TODO: Add early stopping
 
-                loss_val = compute_loss_from_model(model=model, loss_fn=loss_fn,
-                                                   x_input_data=x_batch, y_data_true=y_batch,
-                                                   weights=weights_batch, should_print=False)
-                loss_sum.append(loss_val)
-            loss_sum = np.array(loss_sum).sum()/len(loss_sum)
-            test_loss_list.append(10*np.log10(loss_sum))
-            print(f"Loss value on the test data is: {loss_sum}")
-            if lowest_loss_val == 0:
-                lowest_loss_val = loss_sum
-            if loss_sum < lowest_loss_val:
-                model.save_weights(save_weights_file_path, overwrite=True, save_format="tf")
-                lowest_loss_val = loss_sum
-    fig, axs = plt.subplots(3, 1)
-    axs[0].plot(range(len(train_loss_list)), train_loss_list)
-    axs[0].set_title("Train loss = f(step*epochs)")
-    axs[1].plot(range(len(test_loss_list)), test_loss_list)
-    axs[1].set_title("Test loss = f(every second epoch)")
-    axs[2].plot(range(len(learning_rate_list)), learning_rate_list)
-    axs[2].set_title("learning rate = f(step*epochs)")
-    fig.set_constrained_layout(True)
-    plt.show()
+        # log every 50 epoch
+        # if epoch % 2 == 0:
+        #     if epoch == 0:
+        #         lowest_loss_val = 0
+        #     loss_sum = []
+        #     number_per_slices = 20
+        #     training_data.shuffle_validation_data()
+        #     for i in range(int(np.ceil(training_data.get_test_length()/number_per_slices))):
+        #         if i < int(np.floor(training_data.get_test_length()/number_per_slices)):
+        #             x_batch, y_batch, weights_batch = training_data.get_test_data(slice(i*number_per_slices, (i + 1)*number_per_slices, None))
+        #             x_batch = np.array(x_batch)
+        #             y_batch = np.array(y_batch)
+        #             weights_batch = np.array(weights_batch, dtype="float32")
+        #         else:
+        #             x_batch, y_batch, weights_batch = training_data.get_test_data(slice(i*number_per_slices,
+        #                                                                                 training_data.get_test_length(), None))
+        #             x_batch = np.array(x_batch)
+        #             y_batch = np.array(y_batch)
+        #             weights_batch = np.array(weights_batch, dtype="float32")
+
+        #         loss_val = compute_loss_from_model(model=model, loss_fn=loss_fn,
+        #                                            x_input_data=x_batch, y_data_true=y_batch,
+        #                                            weights=weights_batch, should_print=False)
+        #         loss_sum.append(loss_val)
+        #     loss_sum = np.array(loss_sum).sum()/len(loss_sum)
+        #     test_loss_list.append(10*np.log10(loss_sum))
+        #     print(f"Loss value on the test data is: {loss_sum}")
+        #     if lowest_loss_val == 0:
+        #         lowest_loss_val = loss_sum
+        #     if loss_sum < lowest_loss_val:
+        #         model.save_weights(save_weights_file_path, overwrite=True, save_format="tf")
+        #         lowest_loss_val = loss_sum
+    # fig, axs = plt.subplots(3, 1)
+    # axs[0].plot(range(len(train_loss_list)), train_loss_list)
+    # axs[0].set_title("Train loss = f(step*epochs)")
+    # axs[1].plot(range(len(test_loss_list)), test_loss_list)
+    # axs[1].set_title("Test loss = f(every second epoch)")
+    # axs[2].plot(range(len(learning_rate_list)), learning_rate_list)
+    # axs[2].set_title("learning rate = f(step*epochs)")
+    # fig.set_constrained_layout(True)
+    # plt.show()
 
 else:
     model = create_model(movie_titles.count()[0])
