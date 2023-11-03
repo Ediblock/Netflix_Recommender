@@ -20,7 +20,7 @@ def get_run_logdir():
     run_id = time.strftime("event_%Y_%m_%d-%H_%M_%S")
     return os.path.join(tensorboard_path, run_id)
 
-# TODO: Change the model and change initializations to not uniform
+
 def create_model(vocabulary: int) -> tf.keras.Model:
     emb_initializer = tf.keras.initializers.random_uniform(minval=-1, maxval=1)
     emb_outputsize = 5
@@ -44,6 +44,43 @@ def create_model(vocabulary: int) -> tf.keras.Model:
     output = tf.keras.layers.Dense(vocabulary, activation="relu", use_bias=False, kernel_initializer=
                                    tf.keras.initializers.random_uniform(minval=0, maxval=1))(l6)
     model = tf.keras.models.Model(inputs=input_l, outputs=output)
+    return model
+
+
+def create_model2(movie_vocabulary: int) -> tf.keras.Model:
+    emb_outputsize = 200
+    input_size =(200,)
+
+    #movie path
+    movie_input_layer = tf.keras.layers.Input(shape=(1,))
+    emb1 = tf.keras.layers.Embedding(input_dim=movie_vocabulary + 1, output_dim=emb_outputsize, input_length=1,
+                                     embeddings_initializer=tf.keras.initializers.he_normal()
+                                    )(movie_input_layer)
+    fl1 = tf.keras.layers.Flatten()(emb1)
+
+    #rating path
+    rating_input_layer = tf.keras.layers.Input(shape=(movie_vocabulary,))
+    rl1 = tf.keras.layers.Dense(256, activation='elu', use_bias=True,
+                               kernel_initializer=tf.keras.initializers.he_uniform(),
+                               bias_initializer=tf.keras.initializers.he_normal()
+                              )(rating_input_layer)
+    rl2 = tf.keras.layers.Dense(emb_outputsize, activation='elu', use_bias=True,
+                               kernel_initializer=tf.keras.initializers.he_normal(),
+                               bias_initializer=tf.keras.initializers.he_normal()
+                              )(rl1)
+
+    #dot for these two paths
+    dot = tf.keras.layers.Dot(axes=1)([fl1, rl2])
+    #concatenate
+    cat = tf.keras.layers.Concatenate()([fl1, rl2, dot])
+    drop1 = tf.keras.layers.Dropout(0.2)(cat)
+    ol1 = tf.keras.layers.Dense(256, activation="elu", use_bias=True,
+                                kernel_initializer=tf.keras.initializers.he_normal(),
+                                bias_initializer=tf.keras.initializers.he_normal()
+                               )(drop1)
+    output_layer = tf.keras.layers.Dense(1)(ol1)
+
+    model = tf.keras.models.Model(inputs=[movie_input_layer, rating_input_layer], outputs=output_layer)
     return model
 
 
