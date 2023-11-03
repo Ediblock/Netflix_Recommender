@@ -2,15 +2,17 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import ast
+import copy
 
 
 class MovieDataset:
-    def __init__(self, data_set:tf.data.Dataset, number_of_movies:int, highest_score = 5.0, batch_size = 32,
-                 weight_sample:bool = False, split_test_validation:bool = True):
+    def __init__(self, data_set: tf.data.Dataset, number_of_movies: int, highest_score=5.0, batch_size=32,
+                 weight_sample: bool = False, hot_encoding: bool = False, split_test_validation: bool = True):
         self.number_of_movies = number_of_movies
         self.dataset = data_set
         self.unique_ids = []
         self.highest_score = highest_score
+        self._hot_encoding = hot_encoding
         self.movie_rating_ser = pd.Series(name="movie_rating", dtype=np.float32)
         self.__get_data_from_training()
         self.batch_size = batch_size
@@ -32,10 +34,14 @@ class MovieDataset:
         self._test_percentage_split = test_percentage
         if self._split_test_validation:
             self.split_train_test_validation_data()
+
     def set_data_validation_percentage(self, validation_percentage):
         self._validation_percentage_split = validation_percentage
         if self._split_test_validation:
             self.split_train_test_validation_data()
+
+    def set_hot_encoding(self, hot_encoding):
+        self._hot_encoding = hot_encoding
 
     def get_test_length(self):
         return len(self._test_index_list)
@@ -59,67 +65,132 @@ class MovieDataset:
         self.split_train_test_validation_data(shuffle=True)
 
     def get_train_data(self, index):
-        x, y = None, None
-        if isinstance(index, int):
-            x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("train"))
-            y = x
-        elif isinstance(index, slice):
-            x = []
-            for i in range(*index.indices(len(self))):
-                x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("train"))
-            y = x
-        if not self.weight_sample:
-            return x, y
+        if self._hot_encoding:
+            x1, x2, y = [], [], []
+            if isinstance(index, int):
+                x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("train"))
+            elif isinstance(index, slice):
+                for i in range(*index.indices(len(self))):
+                    tmp_list = self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("train"))
+                    x1.append(tmp_list[0])
+                    x2.append(tmp_list[1])
+                    y.append(tmp_list[2])
+            return x1, x2, y
         else:
-            weights = self.__get_weight_sampling(x)
-            return x, y, weights
+            x, y = None, None
+            if isinstance(index, int):
+                x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("train"))
+                y = x
+            elif isinstance(index, slice):
+                x = []
+                for i in range(*index.indices(len(self))):
+                    x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("train"))
+                y = x
+            if not self.weight_sample:
+                return x, y
+            else:
+                weights = self.__get_weight_sampling(x)
+                return x, y, weights
+
     def get_test_data(self, index):
-        x, y = None, None
-        if isinstance(index, int):
-            x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("test"))
-            y = x
-        elif isinstance(index, slice):
-            x = []
-            for i in range(*index.indices(len(self))):
-                x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("test"))
-            y = x
-        if not self.weight_sample:
-            return x, y
+        if self._hot_encoding:
+            x1, x2, y = [], [], []
+            if isinstance(index, int):
+                x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("test"))
+            elif isinstance(index, slice):
+                for i in range(*index.indices(len(self))):
+                    tmp_list = self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("test"))
+                    x1.append(tmp_list[0])
+                    x2.append(tmp_list[1])
+                    y.append(tmp_list[2])
+            return x1, x2, y
         else:
-            weights = self.__get_weight_sampling(x)
-            return x, y, weights
+            x, y = None, None
+            if isinstance(index, int):
+                x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("test"))
+                y = x
+            elif isinstance(index, slice):
+                x = []
+                for i in range(*index.indices(len(self))):
+                    x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("test"))
+                y = x
+            if not self.weight_sample:
+                return x, y
+            else:
+                weights = self.__get_weight_sampling(x)
+                return x, y, weights
 
     def get_validation_data(self, index):
-        x, y = None, None
-        if isinstance(index, int):
-            x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("validation"))
-            y = x
-        elif isinstance(index, slice):
-            x = []
-            for i in range(*index.indices(len(self))):
-                x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("validation"))
-            y = x
-        if not self.weight_sample:
-            return x, y
+        if self._hot_encoding:
+            x1, x2, y = [], [], []
+            if isinstance(index, int):
+                x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("validation"))
+            elif isinstance(index, slice):
+                for i in range(*index.indices(len(self))):
+                    tmp_list = self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("validation"))
+                    x1.append(tmp_list[0])
+                    x2.append(tmp_list[1])
+                    y.append(tmp_list[2])
+            return x1, x2, y
         else:
-            weights = self.__get_weight_sampling(x)
-            return x, y, weights
+            x, y = None, None
+            if isinstance(index, int):
+                x = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("validation"))
+                y = x
+            elif isinstance(index, slice):
+                x = []
+                for i in range(*index.indices(len(self))):
+                    x += self.get_batch_data(i, type_of_data=self.__split_data_retrieve_dict.get("validation"))
+                y = x
+            if not self.weight_sample:
+                return x, y
+            else:
+                weights = self.__get_weight_sampling(x)
+                return x, y, weights
 
+    def get_user_id(self, index, type_of_data: int = 0):
+        user_idx = []
+        length_check = False
+        if type_of_data == self.__split_data_retrieve_dict.get("train"):
+            index_type_data = self._train_index_list[index]
+            if index_type_data < self.get_train_length():
+                length_check = True
+        elif type_of_data == self.__split_data_retrieve_dict.get("test"):
+            index_type_data = self._test_index_list[index]
+            if index_type_data < self.get_test_length():
+                length_check = True
+        elif type_of_data == self.__split_data_retrieve_dict.get("validation"):
+            index_type_data = self._validation_index_list[index]
+            if index_type_data < self.get_validation_length():
+                length_check = True
+        else:
+            index_type_data = index
 
-    def split_train_test_validation_data(self, shuffle:bool = True):
+        if length_check:
+            for i in range(self.batch_size):
+                user_idx.append(self.movie_rating_ser.index[index * self.batch_size + i])
+        else:
+            for i in range(self.batch_size):
+                try:
+                    user_idx.append(self.movie_rating_ser.index[index * self.batch_size + i])
+                except:
+                    break
+        return user_idx
+
+    def split_train_test_validation_data(self, shuffle: bool = True):
         test_len, validation_len = 0, 0
         if shuffle:
             self.shuffle()
         index_list_length = len(self.index_list)
         if self._test_percentage_split:
-            test_len = int(np.floor(index_list_length*self._test_percentage_split/100.))
+            test_len = int(np.floor(index_list_length * self._test_percentage_split / 100.))
         if self._validation_percentage_split:
-            validation_len = int(np.floor(index_list_length*self._validation_percentage_split/100.))
+            validation_len = int(np.floor(index_list_length * self._validation_percentage_split / 100.))
         self._test_index_list = self.index_list[0:test_len]
         self._validation_index_list = self.index_list[test_len:validation_len + test_len]
         self._train_index_list = self.index_list[test_len + validation_len:]
 
-    def set_split_test_validation_bool(self, split_test_validation:bool):
+    def set_split_test_validation_bool(self, split_test_validation: bool):
         self._split_test_validation = split_test_validation
         if self._split_test_validation:
             self.split_train_test_validation_data()
@@ -132,28 +203,57 @@ class MovieDataset:
         self.weight_sample = weight_sample
 
     def __len__(self):
-        return int(np.ceil(len(self.movie_rating_ser)/float(self.batch_size)))
+        return int(np.ceil(len(self.movie_rating_ser) / float(self.batch_size)))
 
     def __getitem__(self, index):
         x, y = None, None
-        if isinstance(index, int):
-            x = self.get_batch_data(index)
-            y = x
-        elif isinstance(index, slice):
-            x = []
-            for i in range(*index.indices(len(self))):
-                x += self.get_batch_data(i)
-            y = x
-        if not self.weight_sample:
-            return x, y
+        if self._hot_encoding:
+            x1, x2, y = None, None, None
+            if isinstance(index, int):
+                x1, x2, y = self.get_batch_data(index)
+            elif isinstance(index, slice):
+                x1, y, x2 = [], [], []
+                for i in range(*index.indices(len(self))):
+                    tmp_val = self.get_batch_data(i)
+                    x1 += tmp_val[0]
+                    x2 += tmp_val[1]
+                    y += tmp_val[2]
+            return x1, x2, y
         else:
-            weights = self.__get_weight_sampling(x)
+            if isinstance(index, int):
+                x = self.get_batch_data(index)
+                y = x
+            elif isinstance(index, slice):
+                x = []
+                for i in range(*index.indices(len(self))):
+                    x += self.get_batch_data(i)
+                y = x
+
+            if not self.weight_sample:
+                return x, y
+            else:
+                weights = self.__get_weight_sampling(x)
+
             return x, y, weights
 
     def shuffle(self):
         np.random.shuffle(self.index_list)
 
-    def get_batch_data(self, index, type_of_data:int = 0):
+    def get_batch_data(self, index, type_of_data: int = 0):
+        if self._hot_encoding:
+            tmp_list = copy.deepcopy(self.__get_data(index, type_of_data))
+            true_value, movie_id = [], []
+            for movie, rating in tmp_list:
+                rnd_index = np.random.randint(len(movie))
+                movie_id.append(movie.pop(rnd_index))
+                true_value.append(rating.pop(rnd_index))
+            tmp_list = list(map(self._encoding_data, tmp_list))
+            return tmp_list, movie_id, true_value
+        else:
+            tmp_list = self.__get_data(index, type_of_data)
+            return tmp_list
+
+    def __get_data(self, index, type_of_data: int = 0):
         data_list = []
         length_check = False
         if type_of_data == self.__split_data_retrieve_dict.get("train"):
@@ -172,32 +272,33 @@ class MovieDataset:
             index_type_data = index
 
         if length_check:
-           for i in range(self.batch_size):
-              data_list.append(self._encoding_data(self.movie_rating_ser.iloc[
-                    index_type_data*self.batch_size + i
-                                                        ]))
+            for i in range(self.batch_size):
+                data_list.append(self.movie_rating_ser.iloc[
+                                     index_type_data * self.batch_size + i
+                                     ])
         else:
             for i in range(self.batch_size):
                 try:
-                    data_list.append(self._encoding_data(self.movie_rating_ser.iloc[
-                        index_type_data*self.batch_size + i
-                                                          ]))
+                    data_list.append(self.movie_rating_ser.iloc[
+                                         index_type_data * self.batch_size + i
+                                         ])
                 except:
                     break
         return data_list
 
     def _encoding_data(self, data):
-        assert type(data) == list or type(data) == np.numarray, "data is not a list or an array in __encoding_data method"
+        assert type(data) == list or type(
+            data) == np.numarray, "data is not a list or an array in __encoding_data method"
         ratings = data[1]
         movie_ids = data[0]
         tmp_encoded_list = np.zeros(self.number_of_movies)
         for movie_id, movie_rating in zip(movie_ids, ratings):
-            tmp_encoded_list[movie_id - 1] = movie_rating/self.highest_score
+            tmp_encoded_list[movie_id - 1] = movie_rating / self.highest_score
         return tmp_encoded_list.tolist()
 
     def __get_weight_sampling(self, data_list):
-        #Gets weights for each row of ratings of the movies of customer id. Weights are used for training.
-        #zero is there where there are no ratings for particular movie id, otherwise there is a number
+        # Gets weights for each row of ratings of the movies of customer id. Weights are used for training.
+        # zero is there where there are no ratings for particular movie id, otherwise there is a number
         masked_list = []
         for data in data_list:
             masked_list.append(list(map(lambda x: (x > 0 and 1 or 0), data)))
@@ -205,7 +306,9 @@ class MovieDataset:
 
     def __get_data_from_training(self):
         try:
-            self.movie_rating_ser = pd.read_csv("./saved_data.csv", index_col=0)
+            print("I am in the get_data_from_training inside the class method")
+            self.movie_rating_ser = pd.read_csv("C:/Users/Edi/PycharmProjects/Recomender_netflix/saved_data.csv",
+                                                index_col=0)
             self.movie_rating_ser = self.movie_rating_ser.squeeze()
             self.movie_rating_ser = self.movie_rating_ser.apply(ast.literal_eval)
         except:
@@ -234,13 +337,13 @@ class MovieDataset:
                 self.unique_ids = set(list_ids)
                 self.__put_ratings(tmp_list_ids, data_df[1].tolist(), movie_id=movie_id)
                 counter += 1
-                print("Done: {:.2f}".format(counter*100.0/self.number_of_movies))
+                print("Done: {:.2f}".format(counter * 100.0 / self.number_of_movies))
             self.movie_rating_ser.to_csv("./saved_data.csv")
 
-    def __put_ratings(self, ids:list, ratings:list, movie_id:int):
+    def __put_ratings(self, ids: list, ratings: list, movie_id: int):
         for itr, single_id in enumerate(ids):
-            tmp_list = [[], []]         #first list in this container is movie id and the second one is rating
-            tmp_list[0].append(movie_id)    #adding to first list movie rating
+            tmp_list = [[], []]  # first list in this container is movie id and the second one is rating
+            tmp_list[0].append(movie_id)  # adding to first list movie rating
             tmp_list[1].append(ratings[itr])
             try:
                 self.movie_rating_ser[single_id][0] = self.movie_rating_ser[single_id][0] + tmp_list[0]
@@ -248,7 +351,7 @@ class MovieDataset:
             except:
                 self.movie_rating_ser.loc[single_id] = tmp_list
 
-    def __replace_nan_in_series(self, data_series:list):                #not used any longer, should be used with apply method
+    def __replace_nan_in_series(self, data_series: list):  # not used any longer, should be used with apply method
         """Replacing NaN values in the list of each index in Series to 0.0"""
         tmp_list = []
         for i, val in enumerate(data_series):
@@ -258,6 +361,44 @@ class MovieDataset:
                 tmp_list.append(val)
         return np.array(tmp_list)
 
+
+class Recommender(MovieDataset):
+    def __init__(self, model: tf.keras.Model, data_set: tf.data.Dataset, movie_titles: pd.DataFrame,
+                 number_of_movies: int, highest_score: float = 5.0):
+        super().__init__(data_set, number_of_movies, highest_score, batch_size=1, weight_sample=False,
+                         split_test_validation=False)
+        self.model = model
+        self.movie_titles_dataframe = movie_titles
+
+    def _encoding_data(self, data):
+        data_encoded = super()._encoding_data(data)
+        return data_encoded
+
+    def raw_output(self, customer_id):
+        return self.model(np.array([self._encoding_data(self.movie_rating_ser.loc[customer_id])]))[0]
+
+    def raw_output_id(self, idx):
+        return self.model(np.array([self._encoding_data(self.movie_rating_ser.iloc[idx])]))[0]
+
+    def recommend(self, customer_id, number_of_movies=1):
+        recommended_movies = pd.DataFrame(columns=["movie_title", "rating"])
+        raw_model_output = pd.Series(np.array(self.raw_output(customer_id)))
+        raw_model_output = raw_model_output.rename(index=lambda x: x + 1)
+        raw_model_output = raw_model_output.sort_values(ascending=False)
+        movie_ids_ratings_series = raw_model_output.iloc[0:number_of_movies] * self.highest_score
+        for movie_id, rating in movie_ids_ratings_series.items():
+            movie_title = self.movie_titles_dataframe.loc[
+                self.movie_titles_dataframe["id"] == movie_id, ["title"]
+            ].iloc[0]["title"]
+            new_movie_row = {"movie_title": movie_title, "rating": rating}
+            recommended_movies = recommended_movies.append(new_movie_row, ignore_index=True)
+        return recommended_movies
+
+    def get_rating(self, customer_id, movie_id):
+        model_output = self.raw_output(customer_id)
+        return model_output[movie_id - 1].numpy() * self.highest_score
+
+#TODO: Change recommender for the new data and output from the model
 class Recommender(MovieDataset):
     def __init__(self, model:tf.keras.Model, data_set:tf.data.Dataset, movie_titles:pd.DataFrame, number_of_movies:int, highest_score:float = 5.0):
         super().__init__(data_set, number_of_movies, highest_score, batch_size=1, weight_sample=False, split_test_validation=False)
