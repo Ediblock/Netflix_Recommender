@@ -1,9 +1,12 @@
+import keras.backend
 import pandas as pd
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import metrics
 import data_access as da
+import os
+import time
 
 
 movie_titles_file_path = "./data/movie_titles.txt"
@@ -11,8 +14,13 @@ probe_file_path = "./data/probe.txt"
 qualifying_file_path = "./data/qualifying.txt"
 training_set_file_path = "./data/training_set/"
 save_weights_file_path = "./save_model_weights/cp.cpkt"
+tensorboard_path = os.path.join(os.curdir, "tens_logs")
 
+def get_run_logdir():
+    run_id = time.strftime("event_%Y_%m_%d-%H_%M_%S")
+    return os.path.join(tensorboard_path, run_id)
 
+# TODO: Change the model and change initializations to not uniform
 def create_model(vocabulary: int) -> tf.keras.Model:
     emb_initializer = tf.keras.initializers.random_uniform(minval=-1, maxval=1)
     emb_outputsize = 5
@@ -21,17 +29,17 @@ def create_model(vocabulary: int) -> tf.keras.Model:
     # emb = tf.keras.layers.Embedding(input_dim=vocabulary, output_dim=emb_outputsize,
     #                                 embeddings_initializer=emb_initializer, input_length=vocabulary)(input)
     # resh = tf.keras.layers.Flatten()(emb)
-    l1 = tf.keras.layers.Dense(2000, activation="relu", use_bias=False, kernel_initializer=
-                               tf.keras.initializers.random_uniform())(input_l)
+    l1 = tf.keras.layers.Dense(300, activation="relu", use_bias=True, kernel_initializer=
+                               tf.keras.initializers.random_normal(mean=0.5, stddev=3))(input_l)
     drop2 = tf.keras.layers.Dropout(0.2)(l1)
     # l3 = tf.keras.layers.Dense(2000, activation="sigmoid", use_bias=True,
     #                            kernel_initializer=tf.keras.initializers.random_uniform(minval=-0.2, maxval=0.2))(drop2)
     # l4 = tf.keras.layers.Dense(5000, activation="tanh", use_bias=True, kernel_initializer=
     #                            tf.keras.initializers.random_uniform(minval=-0.5, maxval=0.5))(l3)
-    l5 = tf.keras.layers.Dense(1000, activation="relu", use_bias=False, kernel_initializer=
+    l5 = tf.keras.layers.Dense(100, activation="relu", use_bias=True, kernel_initializer=
                                    tf.keras.initializers.random_uniform(minval=0, maxval=1))(drop2)
     # drop3 = tf.keras.layers.Dropout(0.5)(l5)
-    l6 = tf.keras.layers.Dense(1000, activation="sigmoid", use_bias=False, kernel_initializer=
+    l6 = tf.keras.layers.Dense(100, activation="sigmoid", use_bias=True, kernel_initializer=
                                tf.keras.initializers.random_uniform(minval=0.2, maxval=0.8))(l5)
     output = tf.keras.layers.Dense(vocabulary, activation="relu", use_bias=False, kernel_initializer=
                                    tf.keras.initializers.random_uniform(minval=0, maxval=1))(l6)
@@ -73,21 +81,29 @@ if should_train:
 
 
     # Training loop
-    epochs = 50
-    initial_learning_rate = 0.1
-    learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
-                                                                   decay_rate=1/10)
-    optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
+    epochs = 5
+    initial_learning_rate = 1e-5
+    # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
+    #                                                                decay_rate=1/10)
+    # optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
+    optimizer = tf.keras.optimizers.SGD(learning_rate=initial_learning_rate)
+    exp_learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate,
+                                                                       decay_steps=training_data.get_train_length(),
+                                                                         decay_rate=4e6)
     train_loss_list = []
     test_loss_list = []
     learning_rate_list = []
-    #   TODO: Add tensorboard and add learning progress on each epoch with learning rate
+
+    train_batch_summary_writer = tf.summary.create_file_writer(get_run_logdir() + "_batch")
+    train_summary_writer = tf.summary.create_file_writer(get_run_logdir())
+
     for epoch in range(epochs):
         print(f"Start of epoch {epoch}")
         training_data.shuffle_train_data()
-        optimizer._set_hyper("learning_rate", learning_rate(epoch).numpy())
+        # optimizer._set_hyper("learning_rate", learning_rate(epoch).numpy())
+        # keras.backend.set_value(optimizer.learning_rate, learning_rate(epoch).numpy())
 
-        for step in range(int(training_data.get_train_length()/120)):
+        for step in range(int(training_data.get_train_length()/200)):
             x_batch, y_batch, weights_batch = training_data.get_train_data(step)
             x_batch = np.array(x_batch)
             y_batch = np.array(y_batch)
@@ -96,6 +112,9 @@ if should_train:
             #     optimizer._set_hyper("learning_rate", initial_learning_rate/2.)
             # optimizer._set_hyper("learning_rate", learning_rate(epoch*int(training_data.get_train_length()/120) + step).numpy())
             # optimizer._set_hyper("learning_rate", initial_learning_rate)
+            # optimizer.learning_rate = exp_learning_rate(step)
+            optimizer.learning_rate = 10
+
 
             with tf.GradientTape() as tape:
                 #Forward pass
@@ -115,9 +134,27 @@ if should_train:
             #Updating weights for the model
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
             train_loss_list.append(loss_value)
-            learning_rate_list.append(optimizer._decayed_lr("float32").numpy())
+            # learning_rate_list.append(optimizer._decayed_lr("float32").numpy())
+
+            #Saving to tensorboard
+            with train_batch_summary_writer.as_default():
+                tf.summary.scalar("loss", loss_value, step=step)
+                tf.summary.scalar("learning_rate", optimizer.learning_rate, step=step)
+                for layer in model.layers:
+                    # tf.summary.histogram(layer.name, layer.get_weights(), step=step)
+                    for i in range(len(layer.variables)):
+                        tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
+
             if step % 10 == 0:
                 print(f"Loss values on the training data is: {loss_value}")
+
+        with train_summary_writer.as_default():
+            tf.summary.scalar("loss", loss_value, step=epoch)
+            tf.summary.scalar("learning_rate", optimizer.learning_rate, step=epoch)
+            for layer in model.layers:
+                # tf.summary.histogram(layer.name, layer.get_weights(), step=epoch)
+                for i in range(len(layer.variables)):
+                    tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy())
 
         #log every 50 epoch
         if epoch % 2 == 0:
