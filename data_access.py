@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -306,8 +307,7 @@ class MovieDataset:
 
     def __get_data_from_training(self):
         try:
-            print("I am in the get_data_from_training inside the class method")
-            self.movie_rating_ser = pd.read_csv("C:/Users/Edi/PycharmProjects/Recomender_netflix/saved_data.csv",
+            self.movie_rating_ser = pd.read_csv(os.path.join(os.curdir, "saved_data.csv"),
                                                 index_col=0)
             self.movie_rating_ser = self.movie_rating_ser.squeeze()
             self.movie_rating_ser = self.movie_rating_ser.apply(ast.literal_eval)

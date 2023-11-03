@@ -120,7 +120,7 @@ if should_train:
 
 
     # Training loop
-    epochs = 10
+    epochs = 20
     initial_learning_rate = 1e-3
     # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
     #                                                                decay_rate=1/10)
@@ -129,10 +129,14 @@ if should_train:
     # exp_learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate,
     #                                                                    decay_steps=training_data.get_train_length(),
     #                                                                      decay_rate=4e6)
-    train_loss_list = []
-    test_loss_list = []
-    learning_rate_list = []
+
+    patient = 3     #This variable is used for the early stopping
+    # train_loss_list = []
+    test_loss = np.inf
+    # learning_rate_list = []
     rmse_metric = tf.keras.metrics.RootMeanSquaredError()
+    rmse_train_metric = tf.keras.metrics.RootMeanSquaredError()
+
 
     # train_batch_summary_writer = tf.summary.create_file_writer(get_run_logdir() + "_batch")
     train_summary_writer = tf.summary.create_file_writer(get_run_logdir())
@@ -174,7 +178,7 @@ if should_train:
 
             # Updating weights for the model
             optimizer.apply_gradients(zip(grads, model.trainable_weights))
-            train_loss_list.append(loss_value)
+            # train_loss_list.append(loss_value)
             # learning_rate_list.append(optimizer._decayed_lr("float32").numpy())
 
             # Saving to tensorboard
@@ -186,29 +190,50 @@ if should_train:
             #             tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
             # tf.summary.histogram(layer.)
 
-            if step % 10 == 0:
-                print(f"Loss values on the training data is: {loss_value}")
+            if step % (training_data.get_train_length()//5) == 0:
+                print(f"Loss value on the training batch data is: {loss_value}")
 
         # Evaluating test rmse
         # For shorter evaluation time testing data is divided by 10
         rmse_metric.reset_state()
+        rmse_train_metric.reset_state()
         training_data.shuffle_test_data()
-        for step in range(training_data.get_test_length() // 10):
+        #not taken all data because of the time it takes to calculate rmse for train and test data
+        for step in range(training_data.get_test_length()//10):
             x1_batch, x2_batch, y_batch = training_data.get_test_data(step)
             x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
 
             pred = model([x2_batch, x1_batch])
             rmse_metric(y_batch, pred)
 
+        training_data.shuffle_train_data()
+        for step in range(training_data.get_train_length()//100):
+            x1_batch, x2_batch, y_batch = training_data.get_train_data(step)
+            x1_batch, x2_batch, y_batch = [np.array(arr) for arr in (x1_batch, x2_batch, y_batch)]
+
+            pred = model([x2_batch, x1_batch])
+            rmse_train_metric(y_batch, pred)
+        print('#'*20)
+        print(f"Train RMSE loss value is: {rmse_train_metric.result().numpy()}")
+        print(f"Test RMSE loss value is: {rmse_metric.result().numpy()}\nAt epoch: {epoch}\n\n\n")
+
         with train_summary_writer.as_default():
-            tf.summary.scalar("Train_loss", loss_value, step=epoch)
+            tf.summary.scalar("Train_loss", rmse_train_metric.result().numpy(), step=epoch)
             tf.summary.scalar("Test_loss", rmse_metric.result().numpy(), step=epoch)
             tf.summary.scalar("learning_rate", optimizer.learning_rate, step=epoch)
             for layer in model.layers:
                 for i in range(len(layer.variables)):
                     tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
 
-        #TODO: Add early stopping
+        if test_loss > rmse_metric.result().numpy():
+            test_loss = rmse_metric.result().numpy()
+            patient_ = patient
+            model.save_weights(save_weights_file_path, overwrite=True, save_format='tf')
+        else:
+            patient_ -= 1
+
+        if patient_ < 0:
+            break
 
         # log every 50 epoch
         # if epoch % 2 == 0:
