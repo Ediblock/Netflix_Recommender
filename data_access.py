@@ -13,7 +13,7 @@ class MovieDataset:
         self.dataset = data_set
         self.unique_ids = []
         self.highest_score = highest_score
-        self._hot_encoding = hot_encoding
+        self.hot_encoding = hot_encoding
         self.movie_rating_ser = pd.Series(name="movie_rating", dtype=np.float32)
         self.__get_data_from_training()
         self.batch_size = batch_size
@@ -42,7 +42,7 @@ class MovieDataset:
             self.split_train_test_validation_data()
 
     def set_hot_encoding(self, hot_encoding):
-        self._hot_encoding = hot_encoding
+        self.hot_encoding = hot_encoding
 
     def get_test_length(self):
         return len(self._test_index_list)
@@ -66,7 +66,7 @@ class MovieDataset:
         self.split_train_test_validation_data(shuffle=True)
 
     def get_train_data(self, index):
-        if self._hot_encoding:
+        if self.hot_encoding:
             x1, x2, y = [], [], []
             if isinstance(index, int):
                 x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("train"))
@@ -94,7 +94,7 @@ class MovieDataset:
                 return x, y, weights
 
     def get_test_data(self, index):
-        if self._hot_encoding:
+        if self.hot_encoding:
             x1, x2, y = [], [], []
             if isinstance(index, int):
                 x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("test"))
@@ -122,7 +122,7 @@ class MovieDataset:
                 return x, y, weights
 
     def get_validation_data(self, index):
-        if self._hot_encoding:
+        if self.hot_encoding:
             x1, x2, y = [], [], []
             if isinstance(index, int):
                 x1, x2, y = self.get_batch_data(index, type_of_data=self.__split_data_retrieve_dict.get("validation"))
@@ -208,7 +208,7 @@ class MovieDataset:
 
     def __getitem__(self, index):
         x, y = None, None
-        if self._hot_encoding:
+        if self.hot_encoding:
             x1, x2, y = None, None, None
             if isinstance(index, int):
                 x1, x2, y = self.get_batch_data(index)
@@ -241,7 +241,7 @@ class MovieDataset:
         np.random.shuffle(self.index_list)
 
     def get_batch_data(self, index, type_of_data: int = 0):
-        if self._hot_encoding:
+        if self.hot_encoding:
             tmp_list = copy.deepcopy(self.__get_data(index, type_of_data))
             true_value, movie_id = [], []
             for movie, rating in tmp_list:
@@ -363,72 +363,64 @@ class MovieDataset:
 
 
 class Recommender(MovieDataset):
-    def __init__(self, model: tf.keras.Model, data_set: tf.data.Dataset, movie_titles: pd.DataFrame,
-                 number_of_movies: int, highest_score: float = 5.0):
+    def __init__(self, model:tf.keras.Model, data_set:tf.data.Dataset, movie_titles:pd.DataFrame, number_of_movies:int,
+                 highest_score:float = 5.0):
         super().__init__(data_set, number_of_movies, highest_score, batch_size=1, weight_sample=False,
-                         split_test_validation=False)
+                         hot_encoding=True, split_test_validation=False)
         self.model = model
         self.movie_titles_dataframe = movie_titles
 
-    def _encoding_data(self, data):
-        data_encoded = super()._encoding_data(data)
-        return data_encoded
-
-    def raw_output(self, customer_id):
+    def __raw_output(self, customer_id):
+        """This method is for first model. It only takes input of the encoded ratings"""
         return self.model(np.array([self._encoding_data(self.movie_rating_ser.loc[customer_id])]))[0]
 
-    def raw_output_id(self, idx):
+    def __raw_output_id(self, idx):
+        """This method is for first model. It only takes input of the encoded ratings"""
         return self.model(np.array([self._encoding_data(self.movie_rating_ser.iloc[idx])]))[0]
 
-    def recommend(self, customer_id, number_of_movies=1):
+    def get_movie_title(self, movie_id):
+        return self.movie_titles_dataframe['title'][self.movie_titles_dataframe['id'] == movie_id].iloc[0]
+
+
+    def get_rating(self, user_id, movie_id):
+        if self.hot_encoding:
+            encoded_ratings = np.array([self._encoding_data(self.movie_rating_ser.loc[user_id])])
+            return self.model([np.array([movie_id]), encoded_ratings]).numpy()[0][0]
+        else:
+            model_output = self.__raw_output(user_id)
+            return model_output[movie_id - 1].numpy() * self.highest_score
+
+    def recommend(self, user_id, number_of_movies = 1):
         recommended_movies = pd.DataFrame(columns=["movie_title", "rating"])
-        raw_model_output = pd.Series(np.array(self.raw_output(customer_id)))
-        raw_model_output = raw_model_output.rename(index=lambda x: x + 1)
-        raw_model_output = raw_model_output.sort_values(ascending=False)
-        movie_ids_ratings_series = raw_model_output.iloc[0:number_of_movies] * self.highest_score
-        for movie_id, rating in movie_ids_ratings_series.items():
-            movie_title = self.movie_titles_dataframe.loc[
-                self.movie_titles_dataframe["id"] == movie_id, ["title"]
-            ].iloc[0]["title"]
-            new_movie_row = {"movie_title": movie_title, "rating": rating}
-            recommended_movies = recommended_movies.append(new_movie_row, ignore_index=True)
+        if self.hot_encoding:
+            movie_id_list = pd.Series(list(range(1, self.number_of_movies + 1)))
+            movie_id_list = movie_id_list.rename(index=lambda x: x + 1)
+            movie_id_list = movie_id_list.drop(self.movie_rating_ser.loc[user_id][0], inplace=False)
+            ratings = pd.Series()
+            for movie_id in movie_id_list:
+                ratings.at[movie_id] = self.get_rating(user_id, movie_id)
+            ratings = ratings.sort_values(ascending=False)
+            if number_of_movies < 6:
+                ratings = ratings[:10]
+                ratings = ratings.sample(number_of_movies)
+            else:
+                ratings = ratings[:(2*number_of_movies)]
+                ratings = ratings.sample(number_of_movies)
+
+            ratings = ratings.reset_index()
+            ratings = ratings.rename({0: 'rating', 'index': 'movie_id'}, axis='columns')
+            for id, (movie_id, rating) in enumerate(zip(ratings['movie_id'], ratings['rating'])):
+                recommended_movies.loc[id] = {'movie_title': self.get_movie_title(movie_id),
+                                                'rating': rating}
+        else:
+            raw_model_output = pd.Series(np.array(self.__raw_output(user_id)))
+            raw_model_output = raw_model_output.rename(index=lambda x: x + 1)
+            raw_model_output = raw_model_output.sort_values(ascending=False)
+            movie_ids_ratings_series = raw_model_output.iloc[0:number_of_movies]*self.highest_score
+            for movie_id, rating in movie_ids_ratings_series.items():
+                movie_title = self.movie_titles_dataframe.loc[
+                    self.movie_titles_dataframe["id"] == movie_id, ["title"]
+                ].iloc[0]["title"]
+                new_movie_row = {"movie_title": movie_title, "rating": rating}
+                recommended_movies = recommended_movies.append(new_movie_row, ignore_index=True)
         return recommended_movies
-
-    def get_rating(self, customer_id, movie_id):
-        model_output = self.raw_output(customer_id)
-        return model_output[movie_id - 1].numpy() * self.highest_score
-
-#TODO: Change recommender for the new data and output from the model
-class Recommender(MovieDataset):
-    def __init__(self, model:tf.keras.Model, data_set:tf.data.Dataset, movie_titles:pd.DataFrame, number_of_movies:int, highest_score:float = 5.0):
-        super().__init__(data_set, number_of_movies, highest_score, batch_size=1, weight_sample=False, split_test_validation=False)
-        self.model = model
-        self.movie_titles_dataframe = movie_titles
-
-    def _encoding_data(self, data):
-        data_encoded = super()._encoding_data(data)
-        return data_encoded
-
-    def raw_output(self, customer_id):
-        return self.model(np.array([self._encoding_data(self.movie_rating_ser.loc[customer_id])]))[0]
-
-    def raw_output_id(self, idx):
-        return self.model(np.array([self._encoding_data(self.movie_rating_ser.iloc[idx])]))[0]
-
-    def recommend(self, customer_id, number_of_movies = 1):
-        recommended_movies = pd.DataFrame(columns=["movie_title", "rating"])
-        raw_model_output = pd.Series(np.array(self.raw_output(customer_id)))
-        raw_model_output = raw_model_output.rename(index=lambda x: x + 1)
-        raw_model_output = raw_model_output.sort_values(ascending=False)
-        movie_ids_ratings_series = raw_model_output.iloc[0:number_of_movies]*self.highest_score
-        for movie_id, rating in movie_ids_ratings_series.items():
-            movie_title = self.movie_titles_dataframe.loc[
-                self.movie_titles_dataframe["id"] == movie_id, ["title"]
-            ].iloc[0]["title"]
-            new_movie_row = {"movie_title": movie_title, "rating": rating}
-            recommended_movies = recommended_movies.append(new_movie_row, ignore_index=True)
-        return recommended_movies
-
-    def get_rating(self, customer_id, movie_id):
-        model_output = self.raw_output(customer_id)
-        return model_output[movie_id - 1].numpy() * self.highest_score
