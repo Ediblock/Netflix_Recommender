@@ -122,7 +122,6 @@ class MovieDataset:
     def shuffle_all_data(self):
         self.split_train_test_validation_data(shuffle=True)
 
-    # TODO: test it and debug just in case
     def get_train_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -151,7 +150,6 @@ class MovieDataset:
                 weights = self.__get_weight_sampling(x)
                 return x, y, weights
 
-    # TODO: test it and debug just in case
     def get_test_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -180,7 +178,6 @@ class MovieDataset:
                 weights = self.__get_weight_sampling(x)
                 return x, y, weights
 
-    # TODO: test it and debug just in case
     def get_validation_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -277,7 +274,6 @@ class MovieDataset:
         else:
             return int(np.ceil(len(self.movie_rating_ser) / float(self.batch_size)))
 
-    #TODO: test it and debug just in case
     def __getitem__(self, index):
         x, y = None, None
         if self.hot_encoding:
@@ -312,7 +308,6 @@ class MovieDataset:
     def __shuffle(self):
         np.random.shuffle(self.index_list)
 
-    # TODO: Changed, debug just in case and test it
     def get_batch_data(self, index, type_of_data: int = 0):
         if self.hot_encoding:
             #self.__train_data_counter >>
@@ -590,3 +585,5 @@ class Recommender(MovieDataset):
                 new_movie_row = {"movie_title": movie_title, "rating": rating}
                 recommended_movies = recommended_movies.append(new_movie_row, ignore_index=True)
         return recommended_movies
+
+
