@@ -54,30 +54,33 @@ def create_model2(movie_vocabulary: int) -> tf.keras.Model:
     #movie path
     movie_input_layer = tf.keras.layers.Input(shape=(1,))
     emb1 = tf.keras.layers.Embedding(input_dim=movie_vocabulary + 1, output_dim=emb_outputsize, input_length=1,
-                                     embeddings_initializer=tf.keras.initializers.he_normal()
+                                     embeddings_initializer=tf.keras.initializers.he_normal(),
+                                     embeddings_regularizer=tf.keras.regularizers.l2(0.01)
                                     )(movie_input_layer)
     fl1 = tf.keras.layers.Flatten()(emb1)
 
     #rating path
     rating_input_layer = tf.keras.layers.Input(shape=(movie_vocabulary,))
     rl1 = tf.keras.layers.Dense(256, activation='elu', use_bias=True,
-                               kernel_initializer=tf.keras.initializers.he_uniform(),
-                               bias_initializer=tf.keras.initializers.he_normal()
+                               kernel_initializer=tf.keras.initializers.random_normal(stddev=0.2),
+                               bias_initializer=tf.keras.initializers.he_normal(),
+                                bias_regularizer=tf.keras.regularizers.l1(0.05),
+                                kernel_regularizer=tf.keras.regularizers.l2(0.02)
                               )(rating_input_layer)
-    rl2 = tf.keras.layers.Dense(emb_outputsize, activation='elu', use_bias=True,
+    rl3 = tf.keras.layers.Dense(emb_outputsize, activation='elu', use_bias=True,
                                kernel_initializer=tf.keras.initializers.he_normal(),
                                bias_initializer=tf.keras.initializers.he_normal()
                               )(rl1)
 
     #dot for these two paths
-    dot = tf.keras.layers.Dot(axes=1)([fl1, rl2])
+    dot = tf.keras.layers.Dot(axes=1)([fl1, rl3])
     #concatenate
-    cat = tf.keras.layers.Concatenate()([fl1, rl2, dot])
-    drop1 = tf.keras.layers.Dropout(0.2)(cat)
+    cat = tf.keras.layers.Concatenate()([fl1, rl3, dot])
+    # drop1 = tf.keras.layers.Dropout(0.2)(cat)
     ol1 = tf.keras.layers.Dense(256, activation="elu", use_bias=True,
                                 kernel_initializer=tf.keras.initializers.he_normal(),
                                 bias_initializer=tf.keras.initializers.he_normal()
-                               )(drop1)
+                               )(cat)
     output_layer = tf.keras.layers.Dense(1)(ol1)
 
     model = tf.keras.models.Model(inputs=[movie_input_layer, rating_input_layer], outputs=output_layer)
@@ -124,13 +127,15 @@ if should_train:
     initial_learning_rate = 1e-3
     # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
     #                                                                decay_rate=1/10)
+
+    # optimizer = tf.keras.optimizers.SGD(learning_rate=initial_learning_rate, momentum=0.2, nesterov=True)
     optimizer = tf.keras.optimizers.Adam(learning_rate=initial_learning_rate)
     # optimizer = tf.keras.optimizers.SGD(learning_rate=initial_learning_rate)
     # exp_learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate,
     #                                                                    decay_steps=training_data.get_train_length(),
     #                                                                      decay_rate=4e6)
 
-    patient = 3     #This variable is used for the early stopping
+    patient = 10     #This variable is used for the early stopping
     # train_loss_list = []
     test_loss = np.inf
     # learning_rate_list = []
@@ -144,6 +149,10 @@ if should_train:
     for epoch in range(epochs):
         print(f"Start of epoch {epoch}")
         training_data.shuffle_train_data()
+
+        if epoch % 2 == 0:
+            optimizer.learning_rate = optimizer.learning_rate / 2
+
         # optimizer._set_hyper("learning_rate", learning_rate(epoch).numpy())
         # keras.backend.set_value(optimizer.learning_rate, learning_rate(epoch).numpy())
 
@@ -203,7 +212,7 @@ if should_train:
             x1_batch, x2_batch, y_batch = training_data.get_test_data(step)
             x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
 
-            pred = model([x2_batch, x1_batch])
+            pred = model([x2_batch, x1_batch], training=False)
             rmse_metric(y_batch, pred)
 
         training_data.shuffle_train_data()
@@ -211,7 +220,7 @@ if should_train:
             x1_batch, x2_batch, y_batch = training_data.get_train_data(step)
             x1_batch, x2_batch, y_batch = [np.array(arr) for arr in (x1_batch, x2_batch, y_batch)]
 
-            pred = model([x2_batch, x1_batch])
+            pred = model([x2_batch, x1_batch], training=False)
             rmse_train_metric(y_batch, pred)
         print('#'*20)
         print(f"Train RMSE loss value is: {rmse_train_metric.result().numpy()}")
@@ -278,11 +287,13 @@ if should_train:
     # plt.show()
 
 else:
-    model = create_model(movie_titles.count()[0])
+    model = create_model2(movie_titles.count()[0])
     model.load_weights(save_weights_file_path)
 
     recommender = da.Recommender(model, training_dataset, movie_titles, movie_titles.count()[0], highest_score)
     recommended_movies = recommender.recommend(2557870, 5)
-    print(recommended_movies)
+    print(recommender.get_rating(2439493, 4), "2439493 rating should be around 1")
+    print(recommender.get_rating(1584876, 4), "1584876, rating should be around 2")
+    print(recommender.recommend(2439493, 10))
 
 
