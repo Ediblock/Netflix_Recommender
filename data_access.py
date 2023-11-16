@@ -16,20 +16,65 @@ class MovieDataset:
         self.hot_encoding = hot_encoding
         self.movie_rating_ser = pd.Series(name="movie_rating", dtype=np.float32)
         self.__get_data_from_training()
+
         self.batch_size = batch_size
-        self.index_list = np.array(range(self.__len__()))
+        self.index_list = np.array(range(len(self.movie_rating_ser)))
+        #Only with hot_encoding
+        self.__data_counter = pd.Series()
+        self.__train_data_counter = pd.Series()
+        self.__test_data_counter = pd.Series()
+        self.__validation_data_counter = pd.Series()
+        self.__max_data_counter = self.__count_data(self.movie_rating_ser)
+        self.__max_train_counter = self.__max_data_counter
+        self.__max_test_counter = 0
+        self.__max_validation_counter = 0
+        #/Only with hot_encoding
+
         self.weight_sample = weight_sample
+
         self._test_index_list = []
         self._validation_index_list = []
         self._train_index_list = []
         self._test_percentage_split = 10
         self._validation_percentage_split = 10
         self._split_test_validation = split_test_validation
-        if self._split_test_validation:
-            self.split_train_test_validation_data()
         self.__split_data_retrieve_dict = {"train": 1,
                                            "test": 2,
                                            "validation": 3}
+        if self._split_test_validation:
+            self.split_train_test_validation_data()
+
+
+
+    def __count_data(self, data_series:pd.Series):
+        counter = 0
+        for data in data_series:
+            counter += len(data[0])
+        return counter
+
+    def __populate_data_counter(self, type_of_data:int = 0):
+        count = 0
+        if type_of_data == self.__split_data_retrieve_dict["train"]:
+            self.__train_data_counter = pd.Series()
+            for ind in self._train_index_list:
+                count += len(self.movie_rating_ser.iloc[ind][0])
+                self.__train_data_counter.loc[ind] = count
+        elif type_of_data == self.__split_data_retrieve_dict["test"]:
+            self.__test_data_counter = pd.Series()
+            for ind in self._test_index_list:
+                count += len(self.movie_rating_ser.iloc[ind][0])
+                self.__test_data_counter.loc[ind] = count
+        elif type_of_data == self.__split_data_retrieve_dict["validation"]:
+            self.__validation_data_counter = pd.Series()
+            for ind in self._validation_index_list:
+                count += len(self.movie_rating_ser.iloc[ind][0])
+                self.__validation_data_counter.loc[ind] = count
+        else:
+            self.__data_counter = pd.Series()
+            for ind in self.index_list:
+                count += len(self.movie_rating_ser.iloc[ind][0])
+                self.__data_counter.loc[ind] = count
+
 
     def set_data_test_percentage(self, test_percentage):
         self._test_percentage_split = test_percentage
@@ -45,26 +90,39 @@ class MovieDataset:
         self.hot_encoding = hot_encoding
 
     def get_test_length(self):
-        return len(self._test_index_list)
+        if self.hot_encoding:
+            return np.ceil(self.__max_test_counter/self.batch_size)
+        else:
+            return len(self._test_index_list)
 
     def get_validation_length(self):
-        return len(self._validation_index_list)
+        if self.hot_encoding:
+            return np.ceil(self.__max_validation_counter/self.batch_size)
+        else:
+            return len(self._validation_index_list)
 
     def get_train_length(self):
-        return len(self._train_index_list)
+        if self.hot_encoding:
+            return np.ceil(self.__max_train_counter/self.batch_size)
+        else:
+            return len(self._train_index_list)
 
     def shuffle_train_data(self):
         np.random.shuffle(self._train_index_list)
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["train"])
 
     def shuffle_test_data(self):
         np.random.shuffle(self._test_index_list)
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["test"])
 
     def shuffle_validation_data(self):
         np.random.shuffle(self._validation_index_list)
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["validation"])
 
     def shuffle_all_data(self):
         self.split_train_test_validation_data(shuffle=True)
 
+    # TODO: test it and debug just in case
     def get_train_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -93,6 +151,7 @@ class MovieDataset:
                 weights = self.__get_weight_sampling(x)
                 return x, y, weights
 
+    # TODO: test it and debug just in case
     def get_test_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -121,6 +180,7 @@ class MovieDataset:
                 weights = self.__get_weight_sampling(x)
                 return x, y, weights
 
+    # TODO: test it and debug just in case
     def get_validation_data(self, index):
         if self.hot_encoding:
             x1, x2, y = [], [], []
@@ -181,7 +241,7 @@ class MovieDataset:
     def split_train_test_validation_data(self, shuffle: bool = True):
         test_len, validation_len = 0, 0
         if shuffle:
-            self.shuffle()
+            self.__shuffle()
         index_list_length = len(self.index_list)
         if self._test_percentage_split:
             test_len = int(np.floor(index_list_length * self._test_percentage_split / 100.))
@@ -190,6 +250,13 @@ class MovieDataset:
         self._test_index_list = self.index_list[0:test_len]
         self._validation_index_list = self.index_list[test_len:validation_len + test_len]
         self._train_index_list = self.index_list[test_len + validation_len:]
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["train"])
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["test"])
+        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["validation"])
+        self.__populate_data_counter()
+        self.__max_train_counter = self.__count_data(self.movie_rating_ser.iloc[self._train_index_list])
+        self.__max_test_counter = self.__count_data(self.movie_rating_ser.iloc[self._test_index_list])
+        self.__max_validation_counter = self.__count_data(self.movie_rating_ser.iloc[self._validation_index_list])
 
     def set_split_test_validation_bool(self, split_test_validation: bool):
         self._split_test_validation = split_test_validation
@@ -198,14 +265,19 @@ class MovieDataset:
 
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
-        self.index_list = np.array(range(self.__len__()))
+        # self.index_list = np.array(range(self.movie_rating_ser))
+        # self.split_train_test_validation_data(shuffle=False)
 
     def set_weight_sample(self, weight_sample):
         self.weight_sample = weight_sample
 
     def __len__(self):
-        return int(np.ceil(len(self.movie_rating_ser) / float(self.batch_size)))
+        if self.hot_encoding:
+            return np.ceil(self.__max_data_counter/self.batch_size)
+        else:
+            return int(np.ceil(len(self.movie_rating_ser) / float(self.batch_size)))
 
+    #TODO: test it and debug just in case
     def __getitem__(self, index):
         x, y = None, None
         if self.hot_encoding:
@@ -237,22 +309,116 @@ class MovieDataset:
 
             return x, y, weights
 
-    def shuffle(self):
+    def __shuffle(self):
         np.random.shuffle(self.index_list)
 
+    # TODO: Changed, debug just in case and test it
     def get_batch_data(self, index, type_of_data: int = 0):
         if self.hot_encoding:
-            tmp_list = copy.deepcopy(self.__get_data(index, type_of_data))
-            true_value, movie_id = [], []
-            for movie, rating in tmp_list:
-                rnd_index = np.random.randint(len(movie))
-                movie_id.append(movie.pop(rnd_index))
-                true_value.append(rating.pop(rnd_index))
-            tmp_list = list(map(self._encoding_data, tmp_list))
-            return tmp_list, movie_id, true_value
+            #self.__train_data_counter >>
+            #64, 128, 192, 256, 320, 384 ...
+            #loc/index 12, 34, 55, 13, 14, 70 ...
+            #iloc 0, 1, 2, 3, 4, 5 ...
+            start_index = self.batch_size*index
+            end_index = self.batch_size*(index + 1) - 1
+            counter = start_index
+            indexes_list = []
+            if type_of_data == self.__split_data_retrieve_dict["train"]:
+                st_id = self.__train_data_counter.index[np.argmax(self.__train_data_counter > start_index)]
+                iloc_id = self.__train_data_counter.index.get_loc(st_id)
+                while end_index > counter:
+                    indexes_list.append(self.__train_data_counter.index[iloc_id])
+                    counter = self.__train_data_counter.iloc[iloc_id]
+                    iloc_id += 1
+
+                counter = self.batch_size
+                iloc_id = self.__train_data_counter.index.get_loc(st_id)
+                if iloc_id > 0:
+                    start_id = start_index - self.__train_data_counter.iloc[iloc_id - 1]
+                else:
+                    start_id = start_index
+            elif type_of_data == self.__split_data_retrieve_dict["test"]:
+                st_id = self.__test_data_counter.index[np.argmax(self.__test_data_counter > start_index)]
+                iloc_id = self.__test_data_counter.index.get_loc(st_id)
+                while end_index > counter:
+                    indexes_list.append(self.__test_data_counter.index[iloc_id])
+                    counter = self.__test_data_counter.iloc[iloc_id]
+                    iloc_id += 1
+
+                counter = self.batch_size
+                iloc_id = self.__test_data_counter.index.get_loc(st_id)
+                if iloc_id > 0:
+                    start_id = start_index - self.__test_data_counter.iloc[iloc_id - 1]
+                else:
+                    start_id = start_index
+            elif type_of_data == self.__split_data_retrieve_dict["validation"]:
+                st_id = self.__validation_data_counter.index[np.argmax(self.__validation_data_counter > start_index)]
+                iloc_id = self.__validation_data_counter.index.get_loc(st_id)
+                while end_index > counter:
+                    indexes_list.append(self.__validation_data_counter.index[iloc_id])
+                    counter = self.__validation_data_counter.iloc[iloc_id]
+                    iloc_id += 1
+
+                counter = self.batch_size
+                iloc_id = self.__validation_data_counter.index.get_loc(st_id)
+                if iloc_id > 0:
+                    start_id = start_index - self.__validation_data_counter.iloc[iloc_id - 1]
+                else:
+                    start_id = start_index
+            else:
+                st_id = self.__data_counter.index[np.argmax(self.__data_counter > start_index)]
+                iloc_id = self.__data_counter.index.get_loc(st_id)
+                while end_index > counter:
+                    indexes_list.append(self.__data_counter.index[iloc_id])
+                    counter = self.__data_counter.iloc[iloc_id]
+                    iloc_id += 1
+
+                counter = self.batch_size
+                iloc_id = self.__data_counter.index.get_loc(st_id)
+                if iloc_id > 0:
+                    start_id = start_index - self.__data_counter.iloc[iloc_id - 1]
+                else:
+                    start_id = start_index
+
+            input_data, true_value, movie_id = [], [], []
+            for idx, index in enumerate(indexes_list):
+                movie, rating = self.movie_rating_ser.loc[index]
+                if idx == 0 and len(indexes_list) == 1:
+                    for i in range(counter):
+                        true_value.append(rating[start_id + i])
+                        movie_id.append(movie[start_id + i])
+                        input_data.append([movie[0:(start_id + i)] + movie[(start_id + i + 1):],
+                                           rating[0:(start_id + i)] + rating[(start_id + i + 1):]])
+                elif idx == 0:
+                    for i in range(len(movie) - start_id):
+                        true_value.append(rating[start_id + i])
+                        movie_id.append(movie[start_id + i])
+                        input_data.append([movie[0:(start_id + i)] + movie[(start_id + i + 1):],
+                                           rating[0:(start_id + i)] + rating[(start_id + i + 1):]])
+                        counter -= 1
+                else:
+                    for i in range(len(movie)):
+                        true_value.append(rating[i])
+                        movie_id.append(movie[i])
+                        input_data.append([movie[0:(i)] + movie[(i + 1):],
+                                           rating[0:(i)] + rating[(i + 1):]])
+                        counter -= 1
+                        if counter < 1:
+                            break
+            input_data = list(map(self._encoding_data, input_data))
+            return input_data, movie_id, true_value
+
+            # tmp_list = copy.deepcopy(self.__get_data(index, type_of_data))
+            # for movie, rating in tmp_list:
+            #     rnd_index = np.random.randint(len(movie))
+            #     movie_id.append(movie.pop(rnd_index))
+            #     true_value.append(rating.pop(rnd_index))
+            # tmp_list = list(map(self._encoding_data, tmp_list))
+            # return tmp_list, movie_id, true_value
         else:
             tmp_list = self.__get_data(index, type_of_data)
             return tmp_list
+
 
     def __get_data(self, index, type_of_data: int = 0):
         data_list = []
