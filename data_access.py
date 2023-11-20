@@ -587,3 +587,99 @@ class Recommender(MovieDataset):
         return recommended_movies
 
 
+class MovieEmbeddingDataset():
+    def __init__(self, data_file_path:str, batch_size=32, data_usage=1.0, split_train_test_validation=True):
+        self.data = pd.read_csv(data_file_path, sep=",", header=0, index_col=False, dtype={"movie_id": np.int16,
+                                                                                                         "id": np.int32,
+                                                                                                         "date": str,
+                                                                                                         "rating": np.int8})
+        self.data.drop(labels=["date"], axis=1, inplace=True)
+        self.batch_size = batch_size
+        self.split_train_test_validation = split_train_test_validation
+        self.__test_percentage_data = 10
+        self.__validation_percentage_data = 10
+
+        if data_usage > 1.0 or data_usage < 0:
+            raise ValueError("data_usage values has to between values 0 and 1.0")
+
+        if data_usage != 1.0:
+            self.__shuffle()
+            self.data = self.data[0:int(len(self.data["id"])*data_usage)]
+
+        self.__put_user_id_encoding()
+        self.__split_train_test_validation()
+
+
+    def set_test_split_ratio(self, test_ratio):
+        self.__test_percentage_data = test_ratio
+
+    def set_validation_split_ratio(self, validation_ratio):
+        self.__validation_percentage_data = validation_ratio
+
+    def __split_train_test_validation(self, shuffle=True):
+        data_length = len(self.data.index)
+        if shuffle:
+            self.__shuffle()
+        if self.split_train_test_validation:
+            test_len = int(np.ceil((data_length*self.__test_percentage_data)//100))
+            validation_len = int(np.ceil((data_length*self.__validation_percentage_data)//100))
+            self.__test_index_array = self.data.index[0:test_len].to_numpy(dtype=np.int32)
+            self.__validation_index_array = self.data.index[test_len:test_len + validation_len].to_numpy(dtype=np.int32)
+            self.__train_index_array = self.data.index[test_len + validation_len:].to_numpy(dtype=np.int32)
+        else:
+            self.__train_index_array, self.__test_index_array, self.__validation_index_array = [], [], []
+
+
+    def __shuffle(self):
+        self.data = self.data.reindex(np.random.permutation(self.data.index))
+
+    def shuffle_train_data(self):
+        if len(self.__train_index_array) != 0:
+            np.random.shuffle(self.__train_index_array)
+
+    def get_train_data(self, index):
+        true_values = self.data["rating"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        user_ids = self.data["encoded_id"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        movie_ids = self.data["movie_id"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        return user_ids, movie_ids, true_values
+
+    def get_test_data(self, index):
+        true_values = self.data["rating"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        user_ids = self.data["encoded_id"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        movie_ids = self.data["movie_id"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        return user_ids, movie_ids, true_values
+
+    def get_validation_data(self, index):
+        true_values = self.data["rating"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        user_ids = self.data["encoded_id"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        movie_ids = self.data["movie_id"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        return user_ids, movie_ids, true_values
+
+    def get_train_length(self):
+        return np.ceil(len(self.__train_index_array)/self.batch_size).astype(np.int32)
+
+    def get_test_length(self):
+        return np.ceil(len(self.__test_index_array)/self.batch_size).astype(np.int32)
+
+    def get_validation_length(self):
+        return np.ceil(len(self.__validation_index_array)/self.batch_size).astype(np.int32)
+
+    def __len__(self):
+        return int(np.ceil(len(self.data.index)/self.batch_size))
+
+    def get_length_of_unique_user_ids(self):
+        return self.data["id"].nunique()
+
+    def __put_user_id_encoding(self):
+        """This method adds new column to the DataFrame with user_id encodings.
+        It will be used in the embedding layer of the user_ids"""
+        unique_ids = self.data["id"].unique()
+        encoding_array = np.array(range(len(unique_ids))) + 1
+        # first element of the unique_ids is represented by first element in the encoding_array
+        unique_to_encoded = pd.Series(encoding_array, index=unique_ids)
+
+        self.data["encoded_id"] = self.data["id"]
+        self.data["encoded_id"] = self.data["encoded_id"].apply(lambda id:unique_to_encoded.loc[id])
+
+
+
