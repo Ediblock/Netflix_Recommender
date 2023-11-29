@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 import ast
+import secrets
 import copy
 
 
@@ -247,13 +248,14 @@ class MovieDataset:
         self._test_index_list = self.index_list[0:test_len]
         self._validation_index_list = self.index_list[test_len:validation_len + test_len]
         self._train_index_list = self.index_list[test_len + validation_len:]
-        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["train"])
-        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["test"])
-        self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["validation"])
-        self.__populate_data_counter()
-        self.__max_train_counter = self.__count_data(self.movie_rating_ser.iloc[self._train_index_list])
-        self.__max_test_counter = self.__count_data(self.movie_rating_ser.iloc[self._test_index_list])
-        self.__max_validation_counter = self.__count_data(self.movie_rating_ser.iloc[self._validation_index_list])
+        if self.hot_encoding:
+            self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["train"])
+            self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["test"])
+            self.__populate_data_counter(type_of_data=self.__split_data_retrieve_dict["validation"])
+            self.__populate_data_counter()
+            self.__max_train_counter = self.__count_data(self.movie_rating_ser.iloc[self._train_index_list])
+            self.__max_test_counter = self.__count_data(self.movie_rating_ser.iloc[self._test_index_list])
+            self.__max_validation_counter = self.__count_data(self.movie_rating_ser.iloc[self._validation_index_list])
 
     def set_split_test_validation_bool(self, split_test_validation: bool):
         self._split_test_validation = split_test_validation
@@ -588,7 +590,7 @@ class Recommender(MovieDataset):
 
 
 class MovieEmbeddingDataset():
-    def __init__(self, data_file_path:str, batch_size=32, data_usage=1.0, split_train_test_validation=True):
+    def __init__(self, data_file_path:str, batch_size=32, data_usage=1.0, split_train_test_validation=True, load_seed=False):
         self.data = pd.read_csv(data_file_path, sep=",", header=0, index_col=False, dtype={"movie_id": np.int16,
                                                                                                          "id": np.int32,
                                                                                                          "date": str,
@@ -603,7 +605,18 @@ class MovieEmbeddingDataset():
             raise ValueError("data_usage values has to between values 0 and 1.0")
 
         if data_usage != 1.0:
-            self.__shuffle()
+            seed_number = secrets.randbits(128)
+            if load_seed:
+                try:
+                    with open("seed.txt", "r") as file:
+                        seed_number = int(file.readline())
+                except:
+                    raise FileNotFoundError("This file does not exist")
+            else:
+                with open("seed.txt", "w") as file:
+                    file.write(str(seed_number))
+
+            self.__shuffle(seed_number)
             self.data = self.data[0:int(len(self.data["id"])*data_usage)]
 
         self.__put_user_id_encoding()
@@ -630,8 +643,14 @@ class MovieEmbeddingDataset():
             self.__train_index_array, self.__test_index_array, self.__validation_index_array = [], [], []
 
 
-    def __shuffle(self):
-        self.data = self.data.reindex(np.random.permutation(self.data.index))
+    def __shuffle(self, seed=None):
+        if seed == None:
+            self.data = self.data.reindex(np.random.permutation(self.data.index))
+        else:
+            rng = np.random.default_rng(seed)
+            indexes = list(self.data.index)
+            rng.shuffle(indexes)
+            self.data = self.data.reindex(indexes)
 
     def shuffle_train_data(self):
         if len(self.__train_index_array) != 0:
@@ -639,18 +658,21 @@ class MovieEmbeddingDataset():
 
     def get_train_data(self, index):
         true_values = self.data["rating"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        true_values = np.apply_along_axis(lambda x: [[val] for val in x], axis=0, arr=true_values)
         user_ids = self.data["encoded_id"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         movie_ids = self.data["movie_id"][self.__train_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         return user_ids, movie_ids, true_values
 
     def get_test_data(self, index):
         true_values = self.data["rating"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        true_values = np.apply_along_axis(lambda x: [[val] for val in x], axis=0, arr=true_values)
         user_ids = self.data["encoded_id"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         movie_ids = self.data["movie_id"][self.__test_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         return user_ids, movie_ids, true_values
 
     def get_validation_data(self, index):
         true_values = self.data["rating"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
+        true_values = np.apply_along_axis(lambda x: [[val] for val in x], axis=0, arr=true_values)
         user_ids = self.data["encoded_id"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         movie_ids = self.data["movie_id"][self.__validation_index_array[index*self.batch_size:(index + 1)*self.batch_size]].to_numpy()
         return user_ids, movie_ids, true_values
@@ -682,4 +704,80 @@ class MovieEmbeddingDataset():
         self.data["encoded_id"] = self.data["encoded_id"].apply(lambda id:unique_to_encoded.loc[id])
 
 
+class RecommenderEmb(MovieEmbeddingDataset):
+    def __init__(self, model, saved_weights_path:str, data, movie_titles:pd.DataFrame, data_usage=1.0):
+        if type(data) != pd.DataFrame:
+            super().__init__(data_file_path=data, batch_size=1, data_usage=data_usage, split_train_test_validation=False, load_seed=True)
 
+            #Assume that model creation function is the create_model3 from the main.py
+            if isinstance(model, tf.keras.Model):
+                self.model = model
+            else:
+                self.model = model(movie_titles.count()[0], self.get_length_of_unique_user_ids())
+                self.model.load_weights(saved_weights_path)
+
+        else:
+            self.data = data
+
+            #Assume that model creation function is the create_model3 from the main.py
+            if isinstance(model, tf.keras.Model):
+                self.model = model
+            else:
+                self.model = model(movie_titles.count()[0], self.data["id"].nunique())
+                self.model.load_weights(saved_weights_path)
+
+        self.movie_titles = movie_titles
+
+    def get_movie_title(self, movie_id):
+        return self.movie_titles['title'][self.movie_titles['id'] == movie_id].iloc[0]
+
+    def get_rating_from_encoded_id(self, encoded_user_id, movie_id):
+        if type(encoded_user_id) == list and type(movie_id) == list:
+            encoded_user_id = np.array(encoded_user_id)
+            movie_id = np.array(movie_id)
+            ratings_output = self.model([movie_id, encoded_user_id], training=False).numpy()
+        elif type(encoded_user_id) == np.ndarray and type(movie_id) == np.ndarray:
+            ratings_output = self.model([movie_id, encoded_user_id], training=False).numpy()
+        else:
+            ratings_output = self.model([np.array([movie_id]), np.array([encoded_user_id])], training=False).numpy()[0][0]
+        return ratings_output
+
+    def __get_encoded_id_from_id(self, id):
+        return self.data[self.data["id"] == id]["encoded_id"].unique()[0]
+
+    def get_rating_from_user_id(self, user_id, movie_id):
+        if type(user_id) == list and type(movie_id) == list:
+            tmp_user_id = []
+            for user in user_id:
+                tmp_user_id.append(self.__get_encoded_id_from_id(user))
+            tmp_user_id = np.array(tmp_user_id)
+            movie_id = np.array(movie_id)
+            ratings_output = self.model([movie_id, tmp_user_id], training=False).numpy()
+        elif type(user_id) == np.ndarray and type(movie_id) == np.ndarray:
+            tmp_user_id = []
+            for user in user_id:
+                tmp_user_id.append(self.__get_encoded_id_from_id(user))
+            tmp_user_id = np.array(tmp_user_id)
+            ratings_output = self.model([movie_id, tmp_user_id], training=False).numpy()
+        else:
+            ratings_output = self.model([np.array([movie_id]), np.array([self.__get_encoded_id_from_id(user_id)])], training=False).numpy()[0][0]
+        return ratings_output
+
+    def recommend(self, user_id, number_of_movies = 1):
+        recommended_movies = pd.DataFrame(columns=["movie_title", "rating"])
+
+        movie_ids = self.data["movie_id"].unique()
+        user_ids = np.array([self.__get_encoded_id_from_id(user_id)]*len(movie_ids))
+        ratings = self.model([movie_ids, user_ids], training=False).numpy().ravel()
+
+        for idx, (movie_id, rating) in enumerate(zip(movie_ids, ratings)):
+            recommended_movies.loc[idx] = {"movie_title": self.get_movie_title(movie_id),
+                                           "rating": rating}
+
+        recommended_movies.sort_values("rating", ascending=False, inplace=True)
+        if number_of_movies < 6:
+            recommended_movies = recommended_movies.iloc[:10]
+        else:
+            recommended_movies = recommended_movies.iloc[:2*number_of_movies]
+
+        return recommended_movies.sample(number_of_movies)
