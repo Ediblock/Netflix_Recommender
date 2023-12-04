@@ -1,11 +1,11 @@
-import keras.backend
 import pandas as pd
+import os
+os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 import metrics
 import data_access as da
-import os
 import time
 
 
@@ -14,6 +14,7 @@ probe_file_path = "./data/probe.txt"
 qualifying_file_path = "./data/qualifying.txt"
 training_set_file_path = "./data/training_set/"
 save_weights_file_path = "./save_model_weights/cp.cpkt"
+data_file_path = "./data/data_for_emb.csv"
 tensorboard_path = os.path.join(os.curdir, "tens_logs")
 
 def get_run_logdir():
@@ -49,7 +50,6 @@ def create_model(vocabulary: int) -> tf.keras.Model:
 
 def create_model2(movie_vocabulary: int) -> tf.keras.Model:
     emb_outputsize = 200
-    input_size =(200,)
 
     #movie path
     movie_input_layer = tf.keras.layers.Input(shape=(1,))
@@ -86,6 +86,46 @@ def create_model2(movie_vocabulary: int) -> tf.keras.Model:
     model = tf.keras.models.Model(inputs=[movie_input_layer, rating_input_layer], outputs=output_layer)
     return model
 
+def create_model3(movie_vocabulary: int, user_id_vocabulary: int) -> tf.keras.Model:
+    user_id_embedding_output = 200
+    movie_id_embedding_output = 100
+
+    #movie path
+    movie_input_layer = tf.keras.layers.Input(shape=(1,))
+    emb1 = tf.keras.layers.Embedding(name="movie_embedding_layer", input_dim=movie_vocabulary + 1,
+                                     output_dim=movie_id_embedding_output, input_length=1,
+                                     embeddings_initializer=tf.keras.initializers.he_normal(),
+                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.01)
+                                    )(movie_input_layer)
+    fl1 = tf.keras.layers.Flatten()(emb1)
+
+    #user_id path
+    user_id_input_layer = tf.keras.layers.Input(shape=(1,))
+    emb2 = tf.keras.layers.Embedding(name="user_id_embedding_layer", input_dim=user_id_vocabulary + 1,
+                                     output_dim=user_id_embedding_output, input_length=1,
+                                     embeddings_initializer=tf.keras.initializers.he_normal(),
+                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.01)
+                                     )(user_id_input_layer)
+    fl2 = tf.keras.layers.Flatten()(emb2)
+    rl3 = tf.keras.layers.Dense(movie_id_embedding_output, activation='elu', use_bias=True,
+                                kernel_initializer=tf.keras.initializers.he_normal(),
+                                bias_initializer=tf.keras.initializers.he_uniform()
+                                )(fl2)
+
+    #dot for these two paths
+    dot = tf.keras.layers.Dot(axes=1)([fl1, rl3])
+    #concatenate
+    cat = tf.keras.layers.Concatenate()([fl1, rl3, dot])
+    drop1 = tf.keras.layers.Dropout(0.2)(cat)
+    ol1 = tf.keras.layers.Dense(256, activation="elu", use_bias=True,
+                                kernel_initializer=tf.keras.initializers.he_normal(),
+                                bias_initializer=tf.keras.initializers.he_normal()
+                               )(drop1)
+    output_layer = tf.keras.layers.Dense(1)(ol1)
+
+    model = tf.keras.models.Model(inputs=[movie_input_layer, user_id_input_layer], outputs=output_layer)
+    return model
+
 
 def compute_loss_from_model(model:tf.keras.Model, loss_fn:tf.keras.losses.Loss,
                             x_input_data, y_data_true,
@@ -100,31 +140,61 @@ def compute_loss_from_model(model:tf.keras.Model, loss_fn:tf.keras.losses.Loss,
     loss_value = loss_fn(y_data_true, y_predicted, weights)
     if should_print:
         print(f"{loss_fn.name} it's loss value is: {loss_value}")
-    return loss_value
+    return
+
+#This function is only to store the graph of the keras model
+@tf.function
+def trace_keras_model(model, model_input):
+    """This function works with model3"""
+    if isinstance(model, tf.keras.Model):
+        model_output = model([model_input[0], model_input[1]], training=False)
+    else:
+        raise ValueError("model is not a keras.Model instance")
+    return model_output
 
 
 should_train = True
 movie_titles = pd.read_csv(movie_titles_file_path, delimiter=";", encoding="windows-1252",
                            names=["id", "year", "title"], dtype={"id":np.int32, "year":np.int32})
-highest_score = 5.0
+# highest_score = 5.0
 
 training_dataset = tf.data.Dataset.list_files(training_set_file_path + "*.txt")
 if should_train:
-    model = create_model2(movie_titles.count()[0])
-    training_data = da.MovieDataset(training_dataset, movie_titles.count()[0], highest_score)
-    training_data.set_batch_size(64)
-    training_data.set_weight_sample(weight_sample=False)
-    training_data.set_data_test_percentage(10)
-    training_data.set_data_validation_percentage(10)
-    training_data.split_train_test_validation_data(shuffle=True)
-    training_data.set_hot_encoding(True)
-    # loss_fn = metrics.CustomMSE()
+
+    #this section is used in the old model2
+    # model = create_model2(movie_titles.count()[0])
+    # training_data = da.MovieDataset(training_dataset, movie_titles.count()[0], highest_score)
+    # training_data.set_batch_size(64)
+    # training_data.set_weight_sample(weight_sample=False)
+    # training_data.set_data_test_percentage(10)
+    # training_data.set_data_validation_percentage(10)
+    # training_data.split_train_test_validation_data(shuffle=True)
+    # training_data.set_hot_encoding(True)
+    # # loss_fn = metrics.CustomMSE()
+    # loss_fn = tf.keras.losses.MeanSquaredError()
+
+    training_data = da.MovieEmbeddingDataset(data_file_path, data_usage=0.07)
+    print("training_data prepared")
+    model = create_model3(movie_titles.count()[0], training_data.get_length_of_unique_user_ids())
     loss_fn = tf.keras.losses.MeanSquaredError()
+
+    training_data.batch_size = 32
+
+    # overfit_data = training_data.get_train_data(0)
+    # x1_batch, x2_batch, y_batch = [], [], []
+    # for i in range(32//training_data.batch_size):
+    #     x2_batch.append(overfit_data[0])
+    #     x1_batch.append(overfit_data[1])
+    #     y_batch.append(overfit_data[2])
+    #
+    # x2_batch = np.array(x2_batch).ravel()
+    # x1_batch = np.array(x1_batch).ravel()
+    # y_batch = np.array(y_batch).ravel()
 
 
     # Training loop
-    epochs = 20
-    initial_learning_rate = 1e-3
+    epochs = 40
+    initial_learning_rate = 2e-3
     # learning_rate = tf.keras.optimizers.schedules.ExponentialDecay(initial_learning_rate=initial_learning_rate, decay_steps=50,
     #                                                                decay_rate=1/10)
 
@@ -135,7 +205,8 @@ if should_train:
     #                                                                    decay_steps=training_data.get_train_length(),
     #                                                                      decay_rate=4e6)
 
-    patient = 10     #This variable is used for the early stopping
+    patient = 5     #This variable is used for the early stopping
+    patient_ = patient
     # train_loss_list = []
     test_loss = np.inf
     # learning_rate_list = []
@@ -144,22 +215,41 @@ if should_train:
 
 
     # train_batch_summary_writer = tf.summary.create_file_writer(get_run_logdir() + "_batch")
-    train_summary_writer = tf.summary.create_file_writer(get_run_logdir())
+    log_run = get_run_logdir()
+    train_summary_writer = tf.summary.create_file_writer(log_run)
+
+    tf.summary.trace_on(graph=True, profiler=False)
+    x2_batch, x1_batch, _ = training_data.get_train_data(0)
+    trace_keras_model(model, [x1_batch, x2_batch])
+    with train_summary_writer.as_default():
+        tf.summary.trace_export(name="keras_model", step=0)
+
+    tf.summary.trace_off()
+
+
 
     for epoch in range(epochs):
         print(f"Start of epoch {epoch}")
         training_data.shuffle_train_data()
 
-        if epoch % 2 == 0:
-            optimizer.learning_rate = optimizer.learning_rate / 2
+        # if epoch % 5 == 0:
+        #     optimizer.learning_rate = optimizer.learning_rate / 2
+
+        # rng = np.random.default_rng()
+        # state = rng.__getstate__()
+        # for val in [x1_batch, x2_batch, y_batch]:
+        #     rng.shuffle(val)
+        #     rng.__setstate__(state)
 
         # optimizer._set_hyper("learning_rate", learning_rate(epoch).numpy())
         # keras.backend.set_value(optimizer.learning_rate, learning_rate(epoch).numpy())
 
-        for step in range(int(training_data.get_train_length())):
+        for step in range(training_data.get_train_length()):
             # x_batch, y_batch, weights_batch = training_data.get_train_data(step)
-            x1_batch, x2_batch, y_batch = training_data.get_train_data(step)
-            x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
+            x2_batch, x1_batch, y_batch = training_data.get_train_data(step)
+
+
+
             # weights_batch = np.array(weights_batch, dtype="float32")
             # if (epoch*int(training_data.get_train_length()/120) + step) % 10 == 0:
             #     optimizer._set_hyper("learning_rate", initial_learning_rate/2.)
@@ -170,7 +260,7 @@ if should_train:
 
             with tf.GradientTape() as tape:
                 # Forward pass
-                logits = model([x2_batch, x1_batch], training=True)
+                logits = model([x1_batch, x2_batch], training=True)
 
                 # Computing loss value
                 # loss_value = tf.constant(10*np.log10(loss_fn(y_batch, logits, mask_loss=weights_batch)), dtype="float32")
@@ -182,7 +272,7 @@ if should_train:
 
                 loss_value = loss_fn(y_batch, logits)
 
-            # Updating gradients with regards to the loss
+            # Updating gradients with regard to the loss
             grads = tape.gradient(loss_value, model.trainable_weights)
 
             # Updating weights for the model
@@ -206,21 +296,17 @@ if should_train:
         # For shorter evaluation time testing data is divided by 10
         rmse_metric.reset_state()
         rmse_train_metric.reset_state()
-        training_data.shuffle_test_data()
         #not taken all data because of the time it takes to calculate rmse for train and test data
-        for step in range(training_data.get_test_length()//10):
-            x1_batch, x2_batch, y_batch = training_data.get_test_data(step)
-            x1_batch, x2_batch, y_batch = np.array(x1_batch), np.array(x2_batch), np.array(y_batch)
+        for step in range(training_data.get_test_length()):
+            x2_batch, x1_batch, y_batch = training_data.get_test_data(step)
 
-            pred = model([x2_batch, x1_batch], training=False)
+            pred = model([x1_batch, x2_batch], training=False)
             rmse_metric(y_batch, pred)
 
-        training_data.shuffle_train_data()
-        for step in range(training_data.get_train_length()//100):
-            x1_batch, x2_batch, y_batch = training_data.get_train_data(step)
-            x1_batch, x2_batch, y_batch = [np.array(arr) for arr in (x1_batch, x2_batch, y_batch)]
+        for step in range(training_data.get_train_length()//10):
+            x2_batch, x1_batch, y_batch = training_data.get_train_data(step)
 
-            pred = model([x2_batch, x1_batch], training=False)
+            pred = model([x1_batch, x2_batch], training=False)
             rmse_train_metric(y_batch, pred)
         print('#'*20)
         print(f"Train RMSE loss value is: {rmse_train_metric.result().numpy()}")
@@ -233,6 +319,7 @@ if should_train:
             for layer in model.layers:
                 for i in range(len(layer.variables)):
                     tf.summary.histogram(layer.variables[i].name, layer.variables[i].numpy(), step=step)
+                    tf.summary.flush()
 
         if test_loss > rmse_metric.result().numpy():
             test_loss = rmse_metric.result().numpy()
@@ -243,6 +330,7 @@ if should_train:
 
         if patient_ < 0:
             break
+
 
         # log every 50 epoch
         # if epoch % 2 == 0:
@@ -287,13 +375,13 @@ if should_train:
     # plt.show()
 
 else:
-    model = create_model2(movie_titles.count()[0])
-    model.load_weights(save_weights_file_path)
+    # model = create_model2(movie_titles.count()[0])
+    # model.load_weights(save_weights_file_path)
 
-    recommender = da.Recommender(model, training_dataset, movie_titles, movie_titles.count()[0], highest_score)
-    recommended_movies = recommender.recommend(2557870, 5)
-    print(recommender.get_rating(2439493, 4), "2439493 rating should be around 1")
-    print(recommender.get_rating(1584876, 4), "1584876, rating should be around 2")
-    print(recommender.recommend(2439493, 10))
-
+    # recommender = da.Recommender(model, training_dataset, movie_titles, movie_titles.count()[0], highest_score)
+    # recommended_movies = recommender.recommend(2557870, 5)
+    # print(recommender.get_rating(2439493, 4), "2439493 rating should be around 1")
+    # print(recommender.get_rating(1584876, 4), "1584876, rating should be around 2")
+    # print(recommender.recommend(2439493, 10))
+    pass
 
