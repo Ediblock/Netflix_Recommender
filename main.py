@@ -95,7 +95,7 @@ def create_model3(movie_vocabulary: int, user_id_vocabulary: int) -> tf.keras.Mo
     emb1 = tf.keras.layers.Embedding(name="movie_embedding_layer", input_dim=movie_vocabulary + 1,
                                      output_dim=movie_id_embedding_output, input_length=1,
                                      embeddings_initializer=tf.keras.initializers.he_normal(),
-                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.01)
+                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.05)
                                     )(movie_input_layer)
     fl1 = tf.keras.layers.Flatten()(emb1)
 
@@ -104,7 +104,7 @@ def create_model3(movie_vocabulary: int, user_id_vocabulary: int) -> tf.keras.Mo
     emb2 = tf.keras.layers.Embedding(name="user_id_embedding_layer", input_dim=user_id_vocabulary + 1,
                                      output_dim=user_id_embedding_output, input_length=1,
                                      embeddings_initializer=tf.keras.initializers.he_normal(),
-                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.01)
+                                     embeddings_regularizer=tf.keras.regularizers.l2(l2=0.05)
                                      )(user_id_input_layer)
     fl2 = tf.keras.layers.Flatten()(emb2)
     rl3 = tf.keras.layers.Dense(movie_id_embedding_output, activation='elu', use_bias=True,
@@ -116,7 +116,7 @@ def create_model3(movie_vocabulary: int, user_id_vocabulary: int) -> tf.keras.Mo
     dot = tf.keras.layers.Dot(axes=1)([fl1, rl3])
     #concatenate
     cat = tf.keras.layers.Concatenate()([fl1, rl3, dot])
-    drop1 = tf.keras.layers.Dropout(0.2)(cat)
+    drop1 = tf.keras.layers.Dropout(0.3)(cat)
     ol1 = tf.keras.layers.Dense(256, activation="elu", use_bias=True,
                                 kernel_initializer=tf.keras.initializers.he_normal(),
                                 bias_initializer=tf.keras.initializers.he_normal()
@@ -153,7 +153,7 @@ def trace_keras_model(model, model_input):
     return model_output
 
 
-should_train = True
+should_train = False
 movie_titles = pd.read_csv(movie_titles_file_path, delimiter=";", encoding="windows-1252",
                            names=["id", "year", "title"], dtype={"id":np.int32, "year":np.int32})
 # highest_score = 5.0
@@ -205,7 +205,7 @@ if should_train:
     #                                                                    decay_steps=training_data.get_train_length(),
     #                                                                      decay_rate=4e6)
 
-    patient = 5     #This variable is used for the early stopping
+    patient = 3     #This variable is used for the early stopping
     patient_ = patient
     # train_loss_list = []
     test_loss = np.inf
@@ -375,13 +375,15 @@ if should_train:
     # plt.show()
 
 else:
-    # model = create_model2(movie_titles.count()[0])
-    # model.load_weights(save_weights_file_path)
+    training_data = da.MovieEmbeddingDataset(data_file_path, data_usage=0.07, load_seed=True)
+    model = create_model3(movie_titles.count()[0], training_data.get_length_of_unique_user_ids())
+    model.load_weights(save_weights_file_path)
 
-    # recommender = da.Recommender(model, training_dataset, movie_titles, movie_titles.count()[0], highest_score)
-    # recommended_movies = recommender.recommend(2557870, 5)
-    # print(recommender.get_rating(2439493, 4), "2439493 rating should be around 1")
-    # print(recommender.get_rating(1584876, 4), "1584876, rating should be around 2")
-    # print(recommender.recommend(2439493, 10))
-    pass
+    recommender = da.RecommenderEmb(model, saved_weights_path=save_weights_file_path, data=training_data.data,
+                                    movie_titles=movie_titles, data_usage=0.07)
+
+    recommendation = recommender.recommend(recommender.get_id_from_encoded_id(84545), 5)
+    print(f"Recommendation for user {recommender.get_id_from_encoded_id(83545)}:\n {recommendation}\n\n\n")
+    recommendation = recommender.recommend(recommender.get_id_from_encoded_id(172718), 3)
+    print(f"Recommendation for user {recommender.get_id_from_encoded_id(172718)}:\n {recommendation}\n\n\n")
 

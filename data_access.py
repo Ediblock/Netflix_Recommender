@@ -745,6 +745,9 @@ class RecommenderEmb(MovieEmbeddingDataset):
     def __get_encoded_id_from_id(self, id):
         return self.data[self.data["id"] == id]["encoded_id"].unique()[0]
 
+    def get_id_from_encoded_id(self, encoded_id):
+        return self.data[self.data["encoded_id"] == encoded_id]["id"].unique()[0]
+
     def get_rating_from_user_id(self, user_id, movie_id):
         if type(user_id) == list and type(movie_id) == list:
             tmp_user_id = []
