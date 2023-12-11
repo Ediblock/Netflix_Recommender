@@ -10,50 +10,57 @@ import copy
 class MovieDataset:
     def __init__(self, data_set: tf.data.Dataset, number_of_movies: int, highest_score=5.0, batch_size=32,
                  weight_sample: bool = False, hot_encoding: bool = False, split_test_validation: bool = True):
-        self.number_of_movies = number_of_movies
-        self.dataset = data_set
-        self.unique_ids = []
-        self.highest_score = highest_score
-        self.hot_encoding = hot_encoding
-        self.movie_rating_ser = pd.Series(name="movie_rating", dtype=np.float32)
-        self.__get_data_from_training()
+        """Manages data for models from "create_model" and create_model2"""
+        self.number_of_movies = number_of_movies        #Storing number of movies
+        self.dataset = data_set                         #tf.data.Dataset class storing access to data in files
+        self.unique_ids = []                            #Unique ids for reading data from files (data_set) -- probably not needed
+        self.highest_score = highest_score              #highest_score variable is used for a 1st "model"
+        self.hot_encoding = hot_encoding                #boolean value used to change operation of few methods inside the class. True is used with create_model2 and False with the rest models
+        self.movie_rating_ser = pd.Series(name="movie_rating", dtype=np.float32)    #Pandas data container for user_id as "loc", and the value contains [[movie ids], [ratings of the movie ids according to position]]
+        self.__get_data_from_training()                 #Populating movie_rating_ser data container
 
-        self.batch_size = batch_size
-        self.index_list = np.array(range(len(self.movie_rating_ser)))
+        self.batch_size = batch_size                                        #Batch size for training purposes
+        self.index_list = np.array(range(len(self.movie_rating_ser)))       #index_list is used to retrieve data from the movie_rating_ser and also separate for train, test and validation lists
         #Only with hot_encoding
-        self.__data_counter = pd.Series()
-        self.__train_data_counter = pd.Series()
-        self.__test_data_counter = pd.Series()
-        self.__validation_data_counter = pd.Series()
-        self.__max_data_counter = self.__count_data(self.movie_rating_ser)
+        self.__data_counter = pd.Series()                                   #self.__data_counter is used for unwrapping data inside movie_rating_ser,
+                                                                            #which each cell inside movie_rating_ser contains all the ratings of movies for one user.
+                                                                            #This variable helps to follow retrieving batch sizes of data from movie_rating_ser
+        self.__train_data_counter = pd.Series()                             #similar to self.__data_counter but for train indexes
+        self.__test_data_counter = pd.Series()                              #similar to self.__data_counter but for test indexes
+        self.__validation_data_counter = pd.Series()                        #similar to self.__data_counter but for validation indexes
+        self.__max_data_counter = self.__count_data(self.movie_rating_ser)  #It counts all data for each user and inside each user for all ratings
         self.__max_train_counter = self.__max_data_counter
-        self.__max_test_counter = 0
-        self.__max_validation_counter = 0
+        self.__max_test_counter = 0                                         #Similar to self.__max_data_counter but used for test data
+        self.__max_validation_counter = 0                                   #Similar to self.__max_data_counter but used for validation data
         #/Only with hot_encoding
 
-        self.weight_sample = weight_sample
+        self.weight_sample = weight_sample                                  #Boolean variable used to retrieve weights for loss computation in 1st model
 
-        self._test_index_list = []
-        self._validation_index_list = []
-        self._train_index_list = []
-        self._test_percentage_split = 10
-        self._validation_percentage_split = 10
-        self._split_test_validation = split_test_validation
+        self._test_index_list = []                                          #Index list for test data it is used for getting data, length and shuffle data. It contains positions of the user_ids (ilocs)
+        self._validation_index_list = []                                    #Index list for validation data it is used for getting data, length and shuffle data. It contains positions of the user_ids (ilocs)
+        self._train_index_list = []                                         #Index list for train data it is used for getting data, length and shuffle data. It contains positions of the user_ids (ilocs)
+        self._test_percentage_split = 10                                    #Percentage of the total amount of data which goes to test data
+        self._validation_percentage_split = 10                              #Percentage of the total amount of data which goes to validation data
+        self._split_test_validation = split_test_validation                 #Boolean variable, if true then it splits data into test and validation otherwise it does not
         self.__split_data_retrieve_dict = {"train": 1,
                                            "test": 2,
                                            "validation": 3}
         if self._split_test_validation:
-            self.split_train_test_validation_data()
+            self.split_train_test_validation_data()                         #Splits data to train, test and validation
 
 
-
+    #This method counts data for self.__max_data_counter and similar to it.
+    #Returns maximum number od data available. It works with '1st' create_model and create_model2
     def __count_data(self, data_series:pd.Series):
+        """Counts all the data extracted from self.__get_data_from_training()"""
         counter = 0
         for data in data_series:
             counter += len(data[0])
         return counter
 
+    #This method is used to fill the data in self.__train_data_counter
     def __populate_data_counter(self, type_of_data:int = 0):
+        """This method sums the data available at certain index cumulatively (running total)"""
         count = 0
         if type_of_data == self.__split_data_retrieve_dict["train"]:
             self.__train_data_counter = pd.Series()
@@ -76,12 +83,14 @@ class MovieDataset:
                 count += len(self.movie_rating_ser.iloc[ind][0])
                 self.__data_counter.loc[ind] = count
 
-
+    #This code can be more robust and assert whenever user will fill by accident value less than zero or more than 100
     def set_data_test_percentage(self, test_percentage):
+        """Sets test_percentage variable. It accepts values from 0-100"""
         self._test_percentage_split = test_percentage
         if self._split_test_validation:
             self.split_train_test_validation_data()
 
+    #This code can be more robust and assert whenever user will fill by accident value less than zero or more than 100
     def set_data_validation_percentage(self, validation_percentage):
         self._validation_percentage_split = validation_percentage
         if self._split_test_validation:
@@ -124,6 +133,7 @@ class MovieDataset:
         self.split_train_test_validation_data(shuffle=True)
 
     def get_train_data(self, index):
+        """Retrieve train data samples. Quantity of the data is specified by batch_size"""
         if self.hot_encoding:
             x1, x2, y = [], [], []
             if isinstance(index, int):
@@ -208,6 +218,7 @@ class MovieDataset:
                 return x, y, weights
 
     def get_user_id(self, index, type_of_data: int = 0):
+        """Returns user_id from the provided index and type of data (all, train, test, validation)"""
         user_idx = []
         length_check = False
         if type_of_data == self.__split_data_retrieve_dict.get("train"):
@@ -227,16 +238,17 @@ class MovieDataset:
 
         if length_check:
             for i in range(self.batch_size):
-                user_idx.append(self.movie_rating_ser.index[index * self.batch_size + i])
+                user_idx.append(self.movie_rating_ser.index[index_type_data * self.batch_size + i])
         else:
             for i in range(self.batch_size):
                 try:
-                    user_idx.append(self.movie_rating_ser.index[index * self.batch_size + i])
+                    user_idx.append(self.movie_rating_ser.index[index_type_data * self.batch_size + i])
                 except:
                     break
         return user_idx
 
     def split_train_test_validation_data(self, shuffle: bool = True):
+        """Splits entire data into train, test and validation data. It's done on the indexes lists"""
         test_len, validation_len = 0, 0
         if shuffle:
             self.__shuffle()
@@ -311,6 +323,7 @@ class MovieDataset:
         np.random.shuffle(self.index_list)
 
     def get_batch_data(self, index, type_of_data: int = 0):
+        """Returns data for train/test/validation by specified index"""
         if self.hot_encoding:
             #self.__train_data_counter >>
             #64, 128, 192, 256, 320, 384 ...
@@ -319,15 +332,17 @@ class MovieDataset:
             start_index = self.batch_size*index
             end_index = self.batch_size*(index + 1) - 1
             counter = start_index
-            indexes_list = []
+            indexes_list = []       #Stores lists of indexes from where the data will be retrieved (each index (user id) contains few/dozens of ratings/data)
             if type_of_data == self.__split_data_retrieve_dict["train"]:
+                #st_id (starting user id) is the start index from where the data will be obtained
                 st_id = self.__train_data_counter.index[np.argmax(self.__train_data_counter > start_index)]
-                iloc_id = self.__train_data_counter.index.get_loc(st_id)
-                while end_index > counter:
+                iloc_id = self.__train_data_counter.index.get_loc(st_id)            #location in the data where the st_id is
+                while end_index > counter:                                          #Creates list of indexes from where the data will be extracted
                     indexes_list.append(self.__train_data_counter.index[iloc_id])
                     counter = self.__train_data_counter.iloc[iloc_id]
                     iloc_id += 1
 
+                #counter is used for counting data appended into the return value
                 counter = self.batch_size
                 iloc_id = self.__train_data_counter.index.get_loc(st_id)
                 if iloc_id > 0:
@@ -378,8 +393,8 @@ class MovieDataset:
                     start_id = start_index
 
             input_data, true_value, movie_id = [], [], []
-            for idx, index in enumerate(indexes_list):
-                movie, rating = self.movie_rating_ser.loc[index]
+            for idx, index in enumerate(indexes_list):                  #Extract data from movie_rating_ser (dataSeries)
+                movie, rating = self.movie_rating_ser.loc[index]        #Each row contains [[], []] in movie_rating_ser which first array is movie ids and second is ratings of the movies from the index(user is)
                 if idx == 0 and len(indexes_list) == 1:
                     for i in range(counter):
                         true_value.append(rating[start_id + i])
@@ -402,7 +417,7 @@ class MovieDataset:
                         counter -= 1
                         if counter < 1:
                             break
-            input_data = list(map(self._encoding_data, input_data))
+            input_data = list(map(self._encoding_data, input_data))     #creates sparse vector of length = number_of_movies and insert ratings of each movie_id in this vector normalized to values between 0-1
             return input_data, movie_id, true_value
 
             # tmp_list = copy.deepcopy(self.__get_data(index, type_of_data))
@@ -418,10 +433,11 @@ class MovieDataset:
 
 
     def __get_data(self, index, type_of_data: int = 0):
+        """This method is used with a 1st model, getting batch_size data directly from movie_rating_ser"""
         data_list = []
         length_check = False
         if type_of_data == self.__split_data_retrieve_dict.get("train"):
-            index_type_data = self._train_index_list[index]
+            index_type_data = self._train_index_list[index]     #Retrieve user id from the train_index_list from the index which was passed as a argument
             if index_type_data < self.get_train_length():
                 length_check = True
         elif type_of_data == self.__split_data_retrieve_dict.get("test"):
@@ -435,7 +451,7 @@ class MovieDataset:
         else:
             index_type_data = index
 
-        if length_check:
+        if length_check:            #Length check introduced to save some computational time on evaluating try, except all the time
             for i in range(self.batch_size):
                 data_list.append(self.movie_rating_ser.iloc[
                                      index_type_data * self.batch_size + i
@@ -451,6 +467,8 @@ class MovieDataset:
         return data_list
 
     def _encoding_data(self, data):
+        """Creates sparse vector of length = number_of_movies and puts each rating into correct place in this sparse vector.
+        All the ratings are normalized to values between 0-1"""
         assert type(data) == list or type(
             data) == np.numarray, "data is not a list or an array in __encoding_data method"
         ratings = data[1]
@@ -473,7 +491,7 @@ class MovieDataset:
             self.movie_rating_ser = pd.read_csv(os.path.join(os.curdir, "saved_data.csv"),
                                                 index_col=0)
             self.movie_rating_ser = self.movie_rating_ser.squeeze()
-            self.movie_rating_ser = self.movie_rating_ser.apply(ast.literal_eval)
+            self.movie_rating_ser = self.movie_rating_ser.apply(ast.literal_eval)       #converts each row from string "[[], []]" to Matrix [[], []]
         except:
             list_ids = []
             counter = 0
@@ -505,8 +523,8 @@ class MovieDataset:
 
     def __put_ratings(self, ids: list, ratings: list, movie_id: int):
         for itr, single_id in enumerate(ids):
-            tmp_list = [[], []]  # first list in this container is movie id and the second one is rating
-            tmp_list[0].append(movie_id)  # adding to first list movie rating
+            tmp_list = [[], []]                 # first list in this container is movie id and the second one is rating
+            tmp_list[0].append(movie_id)        # adding to first list movie rating
             tmp_list[1].append(ratings[itr])
             try:
                 self.movie_rating_ser[single_id][0] = self.movie_rating_ser[single_id][0] + tmp_list[0]
@@ -557,7 +575,7 @@ class Recommender(MovieDataset):
         recommended_movies = pd.DataFrame(columns=["movie_title", "rating"])
         if self.hot_encoding:
             movie_id_list = pd.Series(list(range(1, self.number_of_movies + 1)))
-            movie_id_list = movie_id_list.rename(index=lambda x: x + 1)
+            movie_id_list = movie_id_list.rename(index=lambda x: x + 1)             #renaming indexes to match with the movie_ids (it starts with 1)
             movie_id_list = movie_id_list.drop(self.movie_rating_ser.loc[user_id][0], inplace=False)
             ratings = pd.Series()
             for movie_id in movie_id_list:
@@ -595,6 +613,8 @@ class MovieEmbeddingDataset():
                                                                                                          "id": np.int32,
                                                                                                          "date": str,
                                                                                                          "rating": np.int8})
+        """This class is used to manage data for model from 'create_model3'."""
+
         self.data.drop(labels=["date"], axis=1, inplace=True)
         self.batch_size = batch_size
         self.split_train_test_validation = split_train_test_validation
@@ -647,6 +667,7 @@ class MovieEmbeddingDataset():
         if seed == None:
             self.data = self.data.reindex(np.random.permutation(self.data.index))
         else:
+            #Shuffling data according to provided seed.
             rng = np.random.default_rng(seed)
             indexes = list(self.data.index)
             rng.shuffle(indexes)
